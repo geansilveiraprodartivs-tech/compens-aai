@@ -33,12 +33,19 @@ function HomePage() {
   const totals = listTotals(items);
 
   const doRefresh = useMutation({
-    mutationFn: () => refresh({ data: undefined }),
+    mutationFn: () => {
+      const city = profile?.city ?? profile?.location_label;
+      if (!city) throw new Error("sem cidade");
+      return refresh({
+        data: { city, state: null, lat: profile?.lat ?? null, lng: profile?.lng ?? null },
+      });
+    },
     onSuccess: (res) => {
       toast[res.status === "ok" ? "success" : "info"](res.message);
       qc.invalidateQueries({ queryKey: ["top-stores"] });
     },
-    onError: () => toast.error("Não foi possível atualizar os preços agora."),
+    onError: () =>
+      toast.error("Não foi possível ler os sites dos mercados agora. Tente de novo em instantes."),
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Carregando...</p>;
