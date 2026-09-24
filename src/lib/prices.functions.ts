@@ -266,7 +266,7 @@ export const refreshPrices = createServerFn({ method: "POST" })
             product_id: productId,
             store_location_id: locationId,
             price: offer.price!,
-            quantity: offer.quantity ?? 1,
+            quantity: 1,
             unit: normalizeUnit(offer.unit),
             source_id: source!.id,
             source_url: offersUrl,
