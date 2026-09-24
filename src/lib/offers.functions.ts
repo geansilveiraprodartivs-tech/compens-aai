@@ -48,7 +48,7 @@ async function findUrl(chain: (typeof CHAINS)[number], city: string) {
       const d = await fc("/search", { query: q, limit: 5, lang: "pt", country: "br" });
       const p = d["data"];
       const results: Array<{ url?: string }> = Array.isArray(p) ? p : (p?.web ?? []);
-      const hit = results.find((r) => r.url?.includes(chain.domain.split(".")[0]));
+      const hit = results.find((r) => r.url?.includes(chain.domain.split(".")[0] ?? chain.domain));
       if (hit?.url) return hit.url;
     } catch (e) {
       console.error(chain.name, e);
