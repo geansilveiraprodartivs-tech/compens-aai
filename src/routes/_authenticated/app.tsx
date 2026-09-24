@@ -101,9 +101,9 @@ function HomePage() {
               <AlertTriangle className="size-4 text-accent" /> Sem dados de preço na sua região
             </p>
             <p className="text-sm text-muted-foreground">
-              Ainda não há nenhuma fonte oficial de preços conectada para esta região, então não
-              exibimos nenhum valor. Assim que um site, encarte ou feed oficial de supermercado for
-              conectado, o ranking aparece aqui automaticamente.
+              Toque em atualizar para buscar as ofertas da semana direto dos sites do Cestto,
+              Atacadão, Macromix, Asun e Fort na sua cidade. Só mostramos preços publicados por
+              eles.
             </p>
             <Button
               variant="outline"
@@ -111,7 +111,8 @@ function HomePage() {
               onClick={() => doRefresh.mutate()}
               disabled={doRefresh.isPending}
             >
-              <RefreshCw className="mr-2 size-4" /> Atualizar preços
+              <RefreshCw className={`mr-2 size-4 ${doRefresh.isPending ? "animate-spin" : ""}`} />
+              Buscar ofertas da semana
             </Button>
           </div>
         )}
