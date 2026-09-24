@@ -1,14 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Trophy, MapPin, AlertTriangle, ShoppingCart } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { RefreshCw, Trophy, MapPin, ShoppingCart, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { LocationSetup } from "@/components/LocationSetup";
 import { Button } from "@/components/ui/button";
 import { useProfile } from "@/hooks/useProfile";
 import { useActiveList, useListItems, listTotals } from "@/hooks/useList";
-import { useTopStores } from "@/hooks/useNearbyStores";
-import { refreshPrices } from "@/lib/prices.functions";
+import { useEffect, useState } from "react";
+import { getWeeklyOffers } from "@/lib/offers.functions";
+type Ranking = Awaited<ReturnType<typeof getWeeklyOffers>>;
 import { brl, relativeTime } from "@/lib/compensai";
 
 export const Route = createFileRoute("/_authenticated/app")({
@@ -24,25 +25,27 @@ export const Route = createFileRoute("/_authenticated/app")({
 });
 
 function HomePage() {
-  const qc = useQueryClient();
   const { data: profile, isLoading } = useProfile();
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
-  const { data: stores = [], isLoading: loadingStores } = useTopStores(profile);
-  const refresh = useServerFn(refreshPrices);
+  const refresh = useServerFn(getWeeklyOffers);
+  const [ranking, setRanking] = useState<Ranking | null>(null);
+  const city = profile?.city ?? profile?.location_label ?? "";
+  useEffect(() => {
+    const raw = city && localStorage.getItem(`offers:${city}`);
+    setRanking(raw ? JSON.parse(raw) : null);
+  }, [city]);
   const totals = listTotals(items);
 
   const doRefresh = useMutation({
     mutationFn: () => {
-      const city = profile?.city ?? profile?.location_label;
       if (!city) throw new Error("sem cidade");
-      return refresh({
-        data: { city, state: null, lat: profile?.lat ?? null, lng: profile?.lng ?? null },
-      });
+      return refresh({ data: { city } });
     },
     onSuccess: (res) => {
-      toast[res.status === "ok" ? "success" : "info"](res.message);
-      qc.invalidateQueries({ queryKey: ["top-stores"] });
+      setRanking(res);
+      localStorage.setItem(`offers:${city}`, JSON.stringify(res));
+      toast.success("Ranking atualizado com as ofertas da semana.");
     },
     onError: () =>
       toast.error("Não foi possível ler os sites dos mercados agora. Tente de novo em instantes."),
@@ -80,104 +83,58 @@ function HomePage() {
       <section>
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold">
-            <Trophy className="size-5 text-accent" /> Onde compensa comprar?
+            <Trophy className="size-5 text-accent" /> Melhores ofertas da semana
           </h2>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => doRefresh.mutate()}
-            disabled={doRefresh.isPending}
-          >
+          <Button size="sm" variant="ghost" onClick={() => doRefresh.mutate()} disabled={doRefresh.isPending}>
             <RefreshCw className={`mr-1 size-4 ${doRefresh.isPending ? "animate-spin" : ""}`} />
             Atualizar
           </Button>
         </div>
 
-        {loadingStores && <p className="mt-3 text-sm text-muted-foreground">Calculando...</p>}
+        {doRefresh.isPending && (
+          <p className="mt-3 text-sm text-muted-foreground">Lendo os sites dos mercados... pode levar até 1 minuto.</p>
+        )}
 
-        {!loadingStores && stores.length === 0 && (
+        {!ranking && !doRefresh.isPending && (
           <div className="glass mt-3 space-y-2 p-4">
-            <p className="flex items-center gap-2 font-semibold">
-              <AlertTriangle className="size-4 text-accent" /> Sem dados de preço na sua região
-            </p>
             <p className="text-sm text-muted-foreground">
-              Toque em atualizar para buscar as ofertas da semana direto dos sites do Cestto,
-              Atacadão, Macromix, Asun e Fort na sua cidade. Só mostramos preços publicados por
-              eles.
+              Toque para ranquear Cestto, Atacadão, Macromix, Asun e Fort pelas ofertas publicadas nos sites deles esta semana.
             </p>
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => doRefresh.mutate()}
-              disabled={doRefresh.isPending}
-            >
-              <RefreshCw className={`mr-2 size-4 ${doRefresh.isPending ? "animate-spin" : ""}`} />
-              Buscar ofertas da semana
+            <Button variant="outline" className="w-full" onClick={() => doRefresh.mutate()}>
+              <RefreshCw className="mr-2 size-4" /> Buscar ofertas da semana
             </Button>
           </div>
         )}
 
-        <ul className="mt-3 space-y-3">
-          {stores.map((store, index) => (
-            <li
-              key={store.locationId}
-              className={`glass p-4 ${index === 0 ? "glow-accent border-accent/40" : ""}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs text-muted-foreground">#{index + 1}</p>
-                  <p className="font-display text-lg font-bold">{store.storeName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {store.label ?? "—"}
-                    {store.distance != null ? ` · ${store.distance.toFixed(1)} km` : ""}
-                  </p>
+        {ranking && (
+          <ul className="mt-3 space-y-3">
+            {ranking.stores.map((s, index) => (
+              <li key={s.name} className={`glass p-4 ${index === 0 ? "glow-accent border-accent/40" : ""}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">#{index + 1}</p>
+                    <p className="font-display text-lg font-bold">{s.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {s.offersCount > 0
+                        ? `${s.offersCount} ofertas publicadas esta semana`
+                        : "Ofertas não identificadas automaticamente"}
+                    </p>
+                  </div>
+                  <Button asChild size="sm" variant={index === 0 ? "default" : "outline"}>
+                    <a href={s.url} target="_blank" rel="noreferrer">
+                      Ver ofertas <ExternalLink className="ml-1 size-3.5" />
+                    </a>
+                  </Button>
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold">
-                    {store.estimatedTotal > 0 ? brl(store.estimatedTotal) : "sem preço"}
-                  </p>
-                  {store.savings > 0 && (
-                    <p className="text-xs text-success">+{brl(store.savings)} a mais</p>
-                  )}
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">{store.reason}</p>
-
-              {store.offers.length > 0 && (
-                <ul className="mt-3 space-y-1.5 border-t border-border/40 pt-3">
-                  {store.offers.map((offer) => (
-                    <li key={offer.title} className="flex items-center justify-between gap-3">
-                      <span className="line-clamp-1 text-xs">{offer.title}</span>
-                      <span className="shrink-0 text-xs font-semibold">
-                        {offer.promoPrice != null ? brl(offer.promoPrice) : "—"}
-                        {offer.regularPrice != null && offer.promoPrice != null && (
-                          <span className="ml-1 font-normal text-muted-foreground line-through">
-                            {brl(offer.regularPrice)}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {store.offers[0]?.sourceUrl && (
-                <a
-                  href={store.offers[0].sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-block text-[11px] text-accent"
-                >
-                  Ver no site do mercado
-                </a>
-              )}
-
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Atualizado {relativeTime(store.lastUpdate)}
-              </p>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+        {ranking && (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            {ranking.city} · atualizado {relativeTime(ranking.updatedAt)}
+          </p>
+        )}
       </section>
     </div>
   );
