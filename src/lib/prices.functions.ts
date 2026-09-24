@@ -87,7 +87,7 @@ async function findOffersUrl(chain: (typeof CHAINS)[number], city: string) {
     lang: "pt",
     country: "br",
   });
-  const results: Array<{ url?: string }> = data.data ?? data.web ?? [];
+  const results: Array<{ url?: string }> = data["data"] ?? data["web"] ?? [];
   const match = results.find((r) => r.url?.includes(chain.domain));
   return match?.url ?? results[0]?.url ?? null;
 }
@@ -106,7 +106,7 @@ async function scrapeOffers(url: string): Promise<Offer[]> {
       },
     ],
   });
-  const json = data.json ?? data.data?.json ?? {};
+  const json = data["json"] ?? data["data"]?.json ?? {};
   const offers = Array.isArray(json.offers) ? (json.offers as Offer[]) : [];
   return offers.filter((o) => o.product_name && typeof o.price === "number" && o.price > 0);
 }
