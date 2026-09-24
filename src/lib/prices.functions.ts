@@ -247,7 +247,7 @@ export const refreshPrices = createServerFn({ method: "POST" })
               .from("products")
               .insert({
                 name,
-                package_qty: offer.quantity ?? null,
+                package_qty: null,
                 unit: normalizeUnit(offer.unit),
               })
               .select("id")
