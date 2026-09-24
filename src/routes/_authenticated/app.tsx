@@ -142,6 +142,36 @@ function HomePage() {
                 </div>
               </div>
               <p className="mt-2 text-xs text-muted-foreground">{store.reason}</p>
+
+              {store.offers.length > 0 && (
+                <ul className="mt-3 space-y-1.5 border-t border-border/40 pt-3">
+                  {store.offers.map((offer) => (
+                    <li key={offer.title} className="flex items-center justify-between gap-3">
+                      <span className="line-clamp-1 text-xs">{offer.title}</span>
+                      <span className="shrink-0 text-xs font-semibold">
+                        {offer.promoPrice != null ? brl(offer.promoPrice) : "—"}
+                        {offer.regularPrice != null && offer.promoPrice != null && (
+                          <span className="ml-1 font-normal text-muted-foreground line-through">
+                            {brl(offer.regularPrice)}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {store.offers[0]?.sourceUrl && (
+                <a
+                  href={store.offers[0].sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block text-[11px] text-accent"
+                >
+                  Ver no site do mercado
+                </a>
+              )}
+
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Atualizado {relativeTime(store.lastUpdate)}
               </p>
