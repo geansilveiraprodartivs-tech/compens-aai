@@ -87,7 +87,10 @@ async function findOffersUrl(chain: (typeof CHAINS)[number], city: string) {
     lang: "pt",
     country: "br",
   });
-  const results: Array<{ url?: string }> = data["data"] ?? data["web"] ?? [];
+  const payload = data["data"];
+  const results: Array<{ url?: string }> = Array.isArray(payload)
+    ? payload
+    : (payload?.web ?? data["web"] ?? []);
   const match = results.find((r) => r.url?.includes(chain.domain));
   return match?.url ?? results[0]?.url ?? null;
 }
@@ -244,7 +247,7 @@ export const refreshPrices = createServerFn({ method: "POST" })
               .from("products")
               .insert({
                 name,
-                package_qty: offer.quantity ?? null,
+                package_qty: null,
                 unit: normalizeUnit(offer.unit),
               })
               .select("id")
@@ -263,7 +266,7 @@ export const refreshPrices = createServerFn({ method: "POST" })
             product_id: productId,
             store_location_id: locationId,
             price: offer.price!,
-            quantity: offer.quantity ?? 1,
+            quantity: 1,
             unit: normalizeUnit(offer.unit),
             source_id: source!.id,
             source_url: offersUrl,
