@@ -258,7 +258,7 @@ function ListaPage() {
             <QtyStepper
               quantity={item.quantity}
               unit={item.unit}
-              onChange={(quantity) => update.mutate({ id: item.id, quantity })}
+              onChange={(quantity, unit) => update.mutate({ id: item.id, quantity, unit })}
             />
             <PriceInput
               value={item.price}
