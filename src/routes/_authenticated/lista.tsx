@@ -51,6 +51,7 @@ function ListaPage() {
   const [price, setPrice] = useState("");
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
+  const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
