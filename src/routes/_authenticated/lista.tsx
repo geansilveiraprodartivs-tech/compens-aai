@@ -172,6 +172,39 @@ function ListaPage() {
       </form>
 
       <section className="glass p-4">
+        <h2 className="mb-2 text-sm font-semibold">Toque para adicionar à lista</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Produtos comuns já prontos — depois é só digitar os preços no mercado.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {QUICK_PRODUCTS.map((product) => {
+            const added = addedNames.has(product.toLowerCase());
+            return (
+              <button
+                key={product}
+                type="button"
+                disabled={added}
+                onClick={() =>
+                  add.mutate(
+                    { name: product, quantity: 1, unit: "un" },
+                    { onSuccess: () => toast.success(`${product} adicionado à lista.`) },
+                  )
+                }
+                className={`rounded-full border px-3 py-1.5 text-sm transition ${
+                  added
+                    ? "border-transparent bg-primary/20 text-muted-foreground"
+                    : "border-input hover:border-primary hover:bg-primary/10"
+                }`}
+              >
+                {added ? <Check className="mr-1 inline size-3.5" /> : <Plus className="mr-1 inline size-3.5" />}
+                {product}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="glass p-4">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-muted-foreground">Total da compra</p>
