@@ -11,6 +11,14 @@ import { useProfile } from "@/hooks/useProfile";
 import { brl, UNITS } from "@/lib/compensai";
 import { useQueryClient } from "@tanstack/react-query";
 
+const QUICK_PRODUCTS = [
+  "Arroz", "Feijão", "Óleo de soja", "Açúcar", "Café", "Leite", "Pão", "Ovos",
+  "Frango", "Carne bovina", "Linguiça", "Macarrão", "Farinha de trigo",
+  "Farinha de mandioca", "Tomate", "Cebola", "Batata", "Banana", "Margarina",
+  "Queijo mussarela", "Refrigerante", "Cerveja", "Água mineral", "Papel higiênico",
+  "Sabonete", "Creme dental", "Detergente", "Sabão em pó", "Amaciante", "Água sanitária",
+];
+
 export const Route = createFileRoute("/_authenticated/lista")({
   head: () => ({
     meta: [
