@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Minus, Trash2, Check, Flag } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -305,27 +305,54 @@ function QtyStepper({
 }: {
   quantity: number;
   unit: string;
-  onChange: (v: number) => void;
+  onChange: (quantity: number, unit: string) => void;
 }) {
+  const [text, setText] = useState(String(quantity).replace(".", ","));
+  useEffect(() => setText(String(quantity).replace(".", ",")), [quantity]);
+  const units = [...new Set(["g", "kg", "ml", "L", unit])];
+
+  function commit() {
+    const n = Number(text.replace(",", "."));
+    if (!Number.isFinite(n) || n === quantity) return;
+    onChange(Math.max(0.5, n), unit);
+  }
+
   return (
     <div className="flex items-center gap-1 rounded-lg bg-secondary/50 p-1">
       <button
         type="button"
         aria-label="Diminuir quantidade"
-        onClick={() => onChange(Math.max(1, quantity - 1))}
-        className="flex size-7 items-center justify-center rounded-md hover:bg-secondary disabled:opacity-40"
-        disabled={quantity <= 1}
+        onClick={() => onChange(Math.max(0.5, quantity - 1), unit)}
+        className="flex size-6 items-center justify-center rounded-md hover:bg-secondary"
       >
         <Minus className="size-3.5" />
       </button>
-      <span className="min-w-8 text-center text-sm font-semibold tabular-nums">
-        {quantity} {unit}
-      </span>
+      <Input
+        inputMode="decimal"
+        aria-label="Quantidade"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="h-7 w-10 px-1 text-center text-sm"
+      />
+      <select
+        aria-label="Unidade"
+        value={unit}
+        onChange={(e) => onChange(quantity, e.target.value)}
+        className="h-7 rounded-md bg-transparent px-0.5 text-xs outline-none"
+      >
+        {units.map((u) => (
+          <option key={u} value={u} className="bg-secondary text-foreground">
+            {u}
+          </option>
+        ))}
+      </select>
       <button
         type="button"
         aria-label="Aumentar quantidade"
-        onClick={() => onChange(quantity + 1)}
-        className="flex size-7 items-center justify-center rounded-md hover:bg-secondary"
+        onClick={() => onChange(quantity + 1, unit)}
+        className="flex size-6 items-center justify-center rounded-md hover:bg-secondary"
       >
         <Plus className="size-3.5" />
       </button>
