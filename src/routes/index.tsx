@@ -19,6 +19,16 @@ export const Route = createFileRoute("/")({
         property: "og:description",
         content: "Compare mercados, monte sua lista e saiba exatamente quanto está economizando.",
       },
+      {
+        property: "og:image",
+        content:
+          "https://compens-aai.lovable.app/__l5e/assets-v1/27615e7e-c1e2-4c0c-a2cb-4b74f8c1bc73/og-image.jpg",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://compens-aai.lovable.app/__l5e/assets-v1/27615e7e-c1e2-4c0c-a2cb-4b74f8c1bc73/og-image.jpg",
+      },
     ],
   }),
   component: Landing,
