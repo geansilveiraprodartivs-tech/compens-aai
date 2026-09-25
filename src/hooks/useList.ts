@@ -11,6 +11,8 @@ export type ListItem = {
   price: number;
   reference_price: number | null;
   checked: boolean;
+  package_size: number | null;
+  package_unit: string | null;
 };
 
 async function userId() {
@@ -81,6 +83,8 @@ export function useItemMutations(listId?: string) {
         unit: item.unit ?? "un",
         price: item.price ?? 0,
         reference_price: item.reference_price ?? null,
+        package_size: item.package_size ?? null,
+        package_unit: item.package_unit ?? null,
       });
       if (error) throw error;
     },
