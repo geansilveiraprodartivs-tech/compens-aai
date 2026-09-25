@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { Plus, Trash2, Check, Flag } from "lucide-react";
+import { Plus, Minus, Trash2, Check, Flag } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -208,11 +208,16 @@ function ListaPage() {
                 {item.name} {item.brand ? <span className="text-muted-foreground">· {item.brand}</span> : null}
               </p>
               <p className="text-xs text-muted-foreground">
-                {item.quantity} {item.unit}
+                {item.unit}
                 {item.package_size ? ` de ${item.package_size} ${item.package_unit}` : ""}
                 {item.price > 0 ? ` · ${brl(item.quantity * item.price)}` : ""}
               </p>
             </div>
+            <QtyStepper
+              quantity={item.quantity}
+              unit={item.unit}
+              onChange={(quantity) => update.mutate({ id: item.id, quantity })}
+            />
             <PriceInput
               value={item.price}
               onSave={(price) => update.mutate({ id: item.id, price })}
@@ -247,6 +252,41 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl bg-secondary/50 p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function QtyStepper({
+  quantity,
+  unit,
+  onChange,
+}: {
+  quantity: number;
+  unit: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-lg bg-secondary/50 p-1">
+      <button
+        type="button"
+        aria-label="Diminuir quantidade"
+        onClick={() => onChange(Math.max(1, quantity - 1))}
+        className="flex size-7 items-center justify-center rounded-md hover:bg-secondary disabled:opacity-40"
+        disabled={quantity <= 1}
+      >
+        <Minus className="size-3.5" />
+      </button>
+      <span className="min-w-8 text-center text-sm font-semibold tabular-nums">
+        {quantity} {unit}
+      </span>
+      <button
+        type="button"
+        aria-label="Aumentar quantidade"
+        onClick={() => onChange(quantity + 1)}
+        className="flex size-7 items-center justify-center rounded-md hover:bg-secondary"
+      >
+        <Plus className="size-3.5" />
+      </button>
     </div>
   );
 }
