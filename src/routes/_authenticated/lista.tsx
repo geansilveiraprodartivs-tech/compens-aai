@@ -38,6 +38,8 @@ function ListaPage() {
   const [brand, setBrand] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unit, setUnit] = useState("un");
+  const [pkgSize, setPkgSize] = useState("");
+  const [pkgUnit, setPkgUnit] = useState("g");
   const [price, setPrice] = useState("");
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
@@ -53,6 +55,8 @@ function ListaPage() {
         unit,
         price: Number(price.replace(",", ".")) || 0,
         reference_price: reference ? Number(reference.replace(",", ".")) : null,
+        package_size: pkgSize ? Number(pkgSize.replace(",", ".")) || null : null,
+        package_unit: pkgSize ? pkgUnit : null,
       },
       {
         onSuccess: () => {
@@ -61,6 +65,7 @@ function ListaPage() {
           setQuantity("1");
           setPrice("");
           setReference("");
+          setPkgSize("");
         },
       },
     );
@@ -130,11 +135,31 @@ function ListaPage() {
           </select>
           <Input
             inputMode="decimal"
-            placeholder="Preço"
+            placeholder="Preço (opcional)"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Input
+            inputMode="decimal"
+            placeholder="Peso/volume (ex.: 500)"
+            value={pkgSize}
+            onChange={(e) => setPkgSize(e.target.value)}
+          />
+          <select
+            value={pkgUnit}
+            onChange={(e) => setPkgUnit(e.target.value)}
+            className="rounded-lg border border-input bg-secondary/50 px-3 text-sm"
+          >
+            {["g", "kg", "ml", "L"].map((u) => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pode deixar o preço em branco e preencher no mercado.
+        </p>
         <Input
           inputMode="decimal"
           placeholder="Preço de referência (para calcular economia)"
@@ -183,10 +208,15 @@ function ListaPage() {
                 {item.name} {item.brand ? <span className="text-muted-foreground">· {item.brand}</span> : null}
               </p>
               <p className="text-xs text-muted-foreground">
-                {item.quantity} {item.unit} × {brl(item.price)}
+                {item.quantity} {item.unit}
+                {item.package_size ? ` de ${item.package_size} ${item.package_unit}` : ""}
+                {item.price > 0 ? ` · ${brl(item.quantity * item.price)}` : ""}
               </p>
             </div>
-            <p className="font-semibold">{brl(item.quantity * item.price)}</p>
+            <PriceInput
+              value={item.price}
+              onSave={(price) => update.mutate({ id: item.id, price })}
+            />
             <button onClick={() => remove.mutate(item.id)} aria-label="Remover">
               <Trash2 className="size-4 text-muted-foreground" />
             </button>
@@ -218,5 +248,23 @@ function Stat({ label, value }: { label: string; value: string }) {
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="font-semibold">{value}</p>
     </div>
+  );
+}
+
+function PriceInput({ value, onSave }: { value: number; onSave: (v: number) => void }) {
+  const [text, setText] = useState(value > 0 ? String(value).replace(".", ",") : "");
+  return (
+    <Input
+      inputMode="decimal"
+      placeholder="R$ preço"
+      aria-label="Preço"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        const n = Number(text.replace(",", ".")) || 0;
+        if (n !== value) onSave(n);
+      }}
+      className="h-9 w-24 text-right"
+    />
   );
 }

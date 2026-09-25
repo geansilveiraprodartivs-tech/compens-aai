@@ -1,0 +1,1 @@
+ALTER TABLE public.shopping_list_items ADD COLUMN package_size numeric, ADD COLUMN package_unit text;

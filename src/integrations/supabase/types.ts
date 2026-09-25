@@ -322,6 +322,8 @@ export type Database = {
           id: string
           list_id: string
           name: string
+          package_size: number | null
+          package_unit: string | null
           price: number
           product_id: string | null
           quantity: number
@@ -336,6 +338,8 @@ export type Database = {
           id?: string
           list_id: string
           name: string
+          package_size?: number | null
+          package_unit?: string | null
           price?: number
           product_id?: string | null
           quantity?: number
@@ -350,6 +354,8 @@ export type Database = {
           id?: string
           list_id?: string
           name?: string
+          package_size?: number | null
+          package_unit?: string | null
           price?: number
           product_id?: string | null
           quantity?: number
