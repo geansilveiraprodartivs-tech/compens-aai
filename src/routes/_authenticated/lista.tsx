@@ -225,15 +225,23 @@ function ListaPage() {
           </Button>
         </div>
 
+        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <Stat label="Orçamento" value={budget ? brl(budget) : "não definido"} />
+          {budget ? (
+            <Stat
+              label="Ainda posso gastar"
+              value={brl(budget - totals.spent)}
+              className={budget - totals.spent >= 0 ? "text-success" : "text-destructive"}
+            />
+          ) : (
+            <Stat label="Ainda posso gastar" value="defina no Perfil" />
+          )}
+        </div>
+
         {buyMode && (
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <Stat label="Comprados" value={`${totals.checkedCount}/${items.length}`} />
             <Stat label="Gasto até agora" value={brl(totals.spent)} />
-            <Stat label="Orçamento" value={budget ? brl(budget) : "não definido"} />
-            <Stat
-              label="Restante"
-              value={budget ? brl(budget - totals.spent) : "—"}
-            />
           </div>
         )}
       </section>
@@ -298,11 +306,11 @@ function ListaPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
   return (
     <div className="rounded-xl bg-secondary/50 p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="font-semibold">{value}</p>
+      <p className={`font-semibold ${className ?? ""}`}>{value}</p>
     </div>
   );
 }
