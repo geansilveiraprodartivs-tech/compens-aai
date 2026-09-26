@@ -240,7 +240,7 @@ function ListaPage() {
 
       <ul className="space-y-2">
         {items.map((item) => (
-          <li key={item.id} className="glass flex items-center gap-3 p-3">
+          <li key={item.id} className="glass flex flex-wrap items-center gap-3 p-3">
             <Checkbox
               checked={item.checked}
               onCheckedChange={(v) => update.mutate({ id: item.id, checked: Boolean(v) })}
@@ -255,11 +255,20 @@ function ListaPage() {
                 {item.price > 0 ? ` · ${brl(item.quantity * item.price)}` : ""}
               </p>
             </div>
-            <QtyStepper
-              quantity={item.quantity}
-              unit={item.unit}
-              onChange={(quantity, unit) => update.mutate({ id: item.id, quantity, unit })}
-            />
+            <div className="flex flex-wrap items-center gap-1">
+              <QtyStepper
+                quantity={item.quantity}
+                unit={item.unit}
+                onChange={(quantity) => update.mutate({ id: item.id, quantity })}
+              />
+              <PkgStepper
+                size={item.package_size}
+                unit={item.package_unit ?? "g"}
+                onChange={(package_size, package_unit) =>
+                  update.mutate({ id: item.id, package_size, package_unit })
+                }
+              />
+            </div>
             <PriceInput
               value={item.price}
               onSave={(price) => update.mutate({ id: item.id, price })}
@@ -305,16 +314,15 @@ function QtyStepper({
 }: {
   quantity: number;
   unit: string;
-  onChange: (quantity: number, unit: string) => void;
+  onChange: (quantity: number) => void;
 }) {
   const [text, setText] = useState(String(quantity).replace(".", ","));
   useEffect(() => setText(String(quantity).replace(".", ",")), [quantity]);
-  const units = [...new Set(["g", "kg", "ml", "L", unit])];
 
   function commit() {
     const n = Number(text.replace(",", "."));
     if (!Number.isFinite(n) || n === quantity) return;
-    onChange(Math.max(0.5, n), unit);
+    onChange(Math.max(0.5, n));
   }
 
   return (
@@ -322,7 +330,7 @@ function QtyStepper({
       <button
         type="button"
         aria-label="Diminuir quantidade"
-        onClick={() => onChange(Math.max(0.5, quantity - 1), unit)}
+        onClick={() => onChange(Math.max(0.5, quantity - 1))}
         className="flex size-6 items-center justify-center rounded-md hover:bg-secondary"
       >
         <Minus className="size-3.5" />
@@ -336,26 +344,69 @@ function QtyStepper({
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         className="h-7 w-10 px-1 text-center text-sm"
       />
+      <span className="px-0.5 text-xs text-muted-foreground">{unit}</span>
+      <button
+        type="button"
+        aria-label="Aumentar quantidade"
+        onClick={() => onChange(quantity + 1)}
+        className="flex size-6 items-center justify-center rounded-md hover:bg-secondary"
+      >
+        <Plus className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/** Quantidade em peso/volume (g, kg, ml, L) — separada da quantidade em unidade. */
+function PkgStepper({
+  size,
+  unit,
+  onChange,
+}: {
+  size: number | null;
+  unit: string;
+  onChange: (size: number, unit: string) => void;
+}) {
+  const [text, setText] = useState(size != null ? String(size).replace(".", ",") : "");
+  useEffect(
+    () => setText(size != null ? String(size).replace(".", ",") : ""),
+    [size],
+  );
+
+  function commit(newUnit = unit) {
+    const n = Number(text.replace(",", "."));
+    if (!Number.isFinite(n) || n === size) return;
+    onChange(Math.max(0, n), newUnit);
+  }
+
+  return (
+    <div className="flex items-center gap-1 rounded-lg bg-secondary/50 p-1">
+      <Input
+        inputMode="decimal"
+        aria-label="Peso ou volume"
+        placeholder="peso"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => commit()}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="h-7 w-12 px-1 text-center text-sm"
+      />
       <select
-        aria-label="Unidade"
+        aria-label="Unidade do peso ou volume"
         value={unit}
-        onChange={(e) => onChange(quantity, e.target.value)}
+        onChange={(e) => {
+          const newUnit = e.target.value;
+          const n = Number(text.replace(",", "."));
+          onChange(Number.isFinite(n) && n > 0 ? n : (size ?? 0), newUnit);
+        }}
         className="h-7 rounded-md bg-transparent px-0.5 text-xs outline-none"
       >
-        {units.map((u) => (
+        {["g", "kg", "ml", "L"].map((u) => (
           <option key={u} value={u} className="bg-secondary text-foreground">
             {u}
           </option>
         ))}
       </select>
-      <button
-        type="button"
-        aria-label="Aumentar quantidade"
-        onClick={() => onChange(quantity + 1, unit)}
-        className="flex size-6 items-center justify-center rounded-md hover:bg-secondary"
-      >
-        <Plus className="size-3.5" />
-      </button>
     </div>
   );
 }
