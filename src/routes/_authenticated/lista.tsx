@@ -230,8 +230,8 @@ function ListaPage() {
           {budget ? (
             <Stat
               label="Ainda posso gastar"
-              value={brl(budget - totals.spent)}
-              className={budget - totals.spent >= 0 ? "text-success" : "text-destructive"}
+              value={brl(budget - totals.total)}
+              className={budget - totals.total >= 0 ? "text-success" : "text-destructive"}
             />
           ) : (
             <Stat label="Ainda posso gastar" value="defina no Perfil" />
