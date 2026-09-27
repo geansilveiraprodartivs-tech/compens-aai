@@ -276,6 +276,68 @@ function ListaPage() {
         )}
       </section>
 
+      {items.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+            disabled={clearAll.isPending}
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+          >
+            <Eraser className="mr-2 size-4" /> Limpar lista
+          </Button>
+          <div className="flex flex-1 items-center gap-2">
+            <Input
+              placeholder="Nome da lista (ex.: Compra do mês)"
+              value={listName}
+              onChange={(e) => setListName(e.target.value)}
+              className="h-9 flex-1"
+            />
+            <Button size="sm" onClick={handleSave} disabled={saveList.isPending}>
+              <Save className="mr-2 size-4" /> Salvar lista
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {savedLists.length > 0 && (
+        <section className="glass p-4">
+          <h2 className="mb-3 text-sm font-semibold">Minhas listas</h2>
+          <ul className="space-y-2">
+            {savedLists.map((saved) => (
+              <li key={saved.id} className="flex items-center gap-2 rounded-xl bg-secondary/50 p-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{saved.name}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    loadList.mutate(saved.id, {
+                      onSuccess: () => toast.success(`"${saved.name}" agora é sua lista ativa.`),
+                      onError: () => toast.error("Não foi possível abrir a lista."),
+                    })
+                  }
+                  disabled={loadList.isPending}
+                >
+                  <FolderOpen className="mr-1.5 size-3.5" /> Usar
+                </Button>
+                <button
+                  onClick={() =>
+                    deleteList.mutate(saved.id, {
+                      onSuccess: () => toast.success("Lista apagada."),
+                      onError: () => toast.error("Não foi possível apagar a lista."),
+                    })
+                  }
+                  aria-label={`Apagar ${saved.name}`}
+                >
+                  <Trash2 className="size-4 text-muted-foreground" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <ul className="space-y-2">
         {items.map((item) => (
           <li key={item.id} className="glass flex flex-wrap items-center gap-3 p-3">
