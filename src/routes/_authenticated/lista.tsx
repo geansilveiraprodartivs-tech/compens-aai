@@ -1,12 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Minus, Trash2, Check, Flag } from "lucide-react";
+import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveList, useListItems, useItemMutations, listTotals } from "@/hooks/useList";
+import {
+  useActiveList,
+  useListItems,
+  useItemMutations,
+  useListMutations,
+  useSavedLists,
+  listTotals,
+} from "@/hooks/useList";
 import { useProfile } from "@/hooks/useProfile";
 import { brl, UNITS } from "@/lib/compensai";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,6 +47,8 @@ function ListaPage() {
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
   const { add, update, remove } = useItemMutations(list?.id);
+  const { clearAll, saveList, loadList, deleteList } = useListMutations(list?.id);
+  const { data: savedLists = [] } = useSavedLists();
   const totals = listTotals(items);
 
   const [name, setName] = useState("");
@@ -51,7 +60,28 @@ function ListaPage() {
   const [price, setPrice] = useState("");
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
+  const [listName, setListName] = useState("");
   const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
+
+  function handleClear() {
+    if (items.length === 0) return;
+    if (!window.confirm("Limpar a lista inteira? Todos os produtos serão removidos.")) return;
+    clearAll.mutate(undefined, {
+      onSuccess: () => toast.success("Lista limpa."),
+      onError: () => toast.error("Não foi possível limpar a lista."),
+    });
+  }
+
+  function handleSave() {
+    const finalName = listName.trim() || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
+    saveList.mutate(finalName, {
+      onSuccess: () => {
+        setListName("");
+        toast.success(`"${finalName}" salva em Minhas listas. Uma lista nova foi iniciada.`);
+      },
+      onError: () => toast.error("Não foi possível salvar a lista."),
+    });
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
