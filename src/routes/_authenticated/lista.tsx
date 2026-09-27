@@ -1,12 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Minus, Trash2, Check, Flag } from "lucide-react";
+import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveList, useListItems, useItemMutations, listTotals } from "@/hooks/useList";
+import {
+  useActiveList,
+  useListItems,
+  useItemMutations,
+  useListMutations,
+  useSavedLists,
+  listTotals,
+} from "@/hooks/useList";
 import { useProfile } from "@/hooks/useProfile";
 import { brl, UNITS } from "@/lib/compensai";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,6 +47,8 @@ function ListaPage() {
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
   const { add, update, remove } = useItemMutations(list?.id);
+  const { clearAll, saveList, loadList, deleteList } = useListMutations(list?.id);
+  const { data: savedLists = [] } = useSavedLists();
   const totals = listTotals(items);
 
   const [name, setName] = useState("");
@@ -51,7 +60,28 @@ function ListaPage() {
   const [price, setPrice] = useState("");
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
+  const [listName, setListName] = useState("");
   const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
+
+  function handleClear() {
+    if (items.length === 0) return;
+    if (!window.confirm("Limpar a lista inteira? Todos os produtos serão removidos.")) return;
+    clearAll.mutate(undefined, {
+      onSuccess: () => toast.success("Lista limpa."),
+      onError: () => toast.error("Não foi possível limpar a lista."),
+    });
+  }
+
+  function handleSave() {
+    const finalName = listName.trim() || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
+    saveList.mutate(finalName, {
+      onSuccess: () => {
+        setListName("");
+        toast.success(`"${finalName}" salva em Minhas listas. Uma lista nova foi iniciada.`);
+      },
+      onError: () => toast.error("Não foi possível salvar a lista."),
+    });
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -245,6 +275,68 @@ function ListaPage() {
           </div>
         )}
       </section>
+
+      {items.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+            disabled={clearAll.isPending}
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+          >
+            <Eraser className="mr-2 size-4" /> Limpar lista
+          </Button>
+          <div className="flex flex-1 items-center gap-2">
+            <Input
+              placeholder="Nome da lista (ex.: Compra do mês)"
+              value={listName}
+              onChange={(e) => setListName(e.target.value)}
+              className="h-9 flex-1"
+            />
+            <Button size="sm" onClick={handleSave} disabled={saveList.isPending}>
+              <Save className="mr-2 size-4" /> Salvar lista
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {savedLists.length > 0 && (
+        <section className="glass p-4">
+          <h2 className="mb-3 text-sm font-semibold">Minhas listas</h2>
+          <ul className="space-y-2">
+            {savedLists.map((saved) => (
+              <li key={saved.id} className="flex items-center gap-2 rounded-xl bg-secondary/50 p-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{saved.name}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    loadList.mutate(saved.id, {
+                      onSuccess: () => toast.success(`"${saved.name}" agora é sua lista ativa.`),
+                      onError: () => toast.error("Não foi possível abrir a lista."),
+                    })
+                  }
+                  disabled={loadList.isPending}
+                >
+                  <FolderOpen className="mr-1.5 size-3.5" /> Usar
+                </Button>
+                <button
+                  onClick={() =>
+                    deleteList.mutate(saved.id, {
+                      onSuccess: () => toast.success("Lista apagada."),
+                      onError: () => toast.error("Não foi possível apagar a lista."),
+                    })
+                  }
+                  aria-label={`Apagar ${saved.name}`}
+                >
+                  <Trash2 className="size-4 text-muted-foreground" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <ul className="space-y-2">
         {items.map((item) => (

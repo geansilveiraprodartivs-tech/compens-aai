@@ -64,6 +64,104 @@ export function useListItems(listId?: string) {
   });
 }
 
+export type SavedList = {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
+};
+
+/** Listas salvas pelo usuário (para reutilizar depois). */
+export function useSavedLists() {
+  return useQuery({
+    queryKey: ["saved-lists"],
+    queryFn: async (): Promise<SavedList[]> => {
+      const uid = await userId();
+      const { data, error } = await supabase
+        .from("shopping_lists")
+        .select("id, name, status, created_at")
+        .eq("user_id", uid)
+        .eq("status", "saved")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as SavedList[];
+    },
+  });
+}
+
+export function useListMutations(listId?: string) {
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["active-list"] });
+    qc.invalidateQueries({ queryKey: ["saved-lists"] });
+    qc.invalidateQueries({ queryKey: ["list-items"] });
+  };
+
+  /** Remove todos os itens da lista ativa. */
+  const clearAll = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from("shopping_list_items")
+        .delete()
+        .eq("list_id", listId!);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
+  /** Salva a lista ativa com um nome e começa uma lista nova. */
+  const saveList = useMutation({
+    mutationFn: async (name: string) => {
+      const uid = await userId();
+      const { error } = await supabase
+        .from("shopping_lists")
+        .update({ name, status: "saved" })
+        .eq("id", listId!);
+      if (error) throw error;
+      const { error: createError } = await supabase
+        .from("shopping_lists")
+        .insert({ user_id: uid });
+      if (createError) throw createError;
+    },
+    onSuccess: invalidate,
+  });
+
+  /** Torna uma lista salva a lista ativa (a ativa atual vira salva). */
+  const loadList = useMutation({
+    mutationFn: async (savedId: string) => {
+      if (listId) {
+        const { error } = await supabase
+          .from("shopping_lists")
+          .update({ status: "saved" })
+          .eq("id", listId);
+        if (error) throw error;
+      }
+      const { error } = await supabase
+        .from("shopping_lists")
+        .update({ status: "active" })
+        .eq("id", savedId);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
+  /** Apaga uma lista salva e seus itens. */
+  const deleteList = useMutation({
+    mutationFn: async (savedId: string) => {
+      const { error: itemsError } = await supabase
+        .from("shopping_list_items")
+        .delete()
+        .eq("list_id", savedId);
+      if (itemsError) throw itemsError;
+      const { error } = await supabase.from("shopping_lists").delete().eq("id", savedId);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
+  return { clearAll, saveList, loadList, deleteList };
+}
+
 export function useItemMutations(listId?: string) {
   const qc = useQueryClient();
   const invalidate = () => {
