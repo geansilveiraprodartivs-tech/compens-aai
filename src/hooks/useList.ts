@@ -172,7 +172,7 @@ export function useListMutations(listId?: string) {
     onSuccess: invalidate,
   });
 
-  return { clearAll, saveList, loadList, deleteList };
+  return { clearAll, saveList, renameList, loadList, deleteList };
 }
 
 export function useItemMutations(listId?: string) {
