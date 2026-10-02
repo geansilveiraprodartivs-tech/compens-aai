@@ -106,7 +106,7 @@ function ListaPage() {
   }
 
   function handleSave() {
-    const finalName = listName.trim() || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
+    const finalName = listName || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
     saveList.mutate(finalName, {
       onSuccess: () => {
         setListName("");
