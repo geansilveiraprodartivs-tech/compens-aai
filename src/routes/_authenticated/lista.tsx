@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser, Download } from "lucide-react";
+import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser, Download, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +47,7 @@ function ListaPage() {
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
   const { add, update, remove } = useItemMutations(list?.id);
-  const { clearAll, saveList, loadList, deleteList } = useListMutations(list?.id);
+  const { clearAll, saveList, renameList, loadList, deleteList } = useListMutations(list?.id);
   const { data: savedLists = [] } = useSavedLists();
   const totals = listTotals(items);
 
@@ -61,7 +61,25 @@ function ListaPage() {
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
   const [listName, setListName] = useState("");
+  const [editName, setEditName] = useState("");
+  const [nameLoadedFor, setNameLoadedFor] = useState<string | null>(null);
   const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
+
+  // Sincroniza o campo de edição com o nome salvo quando a lista muda.
+  useEffect(() => {
+    if (list && nameLoadedFor !== list.id) {
+      setEditName(list.name ?? "");
+      setNameLoadedFor(list.id);
+    }
+  }, [list, nameLoadedFor]);
+
+  function commitName() {
+    if (!list || editName === (list.name ?? "")) return;
+    renameList.mutate(editName, {
+      onSuccess: () => toast.success("Nome da lista atualizado."),
+      onError: () => toast.error("Não foi possível salvar o nome."),
+    });
+  }
 
   function handleDownload() {
     if (items.length === 0) return;
@@ -88,7 +106,7 @@ function ListaPage() {
   }
 
   function handleSave() {
-    const finalName = listName.trim() || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
+    const finalName = listName || `Lista ${new Date().toLocaleDateString("pt-BR")}`;
     saveList.mutate(finalName, {
       onSuccess: () => {
         setListName("");
@@ -259,6 +277,17 @@ function ListaPage() {
       </section>
 
       <section className="glass p-4">
+        <label className="mb-1 block text-xs text-muted-foreground">Nome da lista</label>
+        <div className="mb-4 flex items-center gap-2">
+          <Pencil className="size-4 shrink-0 text-muted-foreground" />
+          <Input
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            placeholder="Ex.: Compra do mês"
+          />
+        </div>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-muted-foreground">Total da compra</p>
