@@ -126,6 +126,19 @@ export function useListMutations(listId?: string) {
     onSuccess: invalidate,
   });
 
+  /** Renomeia a lista ativa (guarda o nome exatamente como digitado). */
+  const renameList = useMutation({
+    mutationFn: async (name: string) => {
+      const { error } = await supabase
+        .from("shopping_lists")
+        .update({ name })
+        .eq("id", listId!);
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
+
   /** Torna uma lista salva a lista ativa (a ativa atual vira salva). */
   const loadList = useMutation({
     mutationFn: async (savedId: string) => {
