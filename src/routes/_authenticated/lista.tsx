@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser } from "lucide-react";
+import { Plus, Minus, Trash2, Check, Flag, Save, FolderOpen, Eraser, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,21 @@ function ListaPage() {
   const [buyMode, setBuyMode] = useState(false);
   const [listName, setListName] = useState("");
   const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
+
+  function handleDownload() {
+    if (items.length === 0) return;
+    const text = items.map((i) => i.name.trim()).join("\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "lista-compensai.txt";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success("Lista baixada (nomes dos produtos).");
+  }
 
   function handleClear() {
     if (items.length === 0) return;
@@ -286,6 +301,9 @@ function ListaPage() {
             className="text-destructive border-destructive/40 hover:bg-destructive/10"
           >
             <Eraser className="mr-2 size-4" /> Limpar lista
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleDownload}>
+            <Download className="mr-2 size-4" /> Baixar lista
           </Button>
           <div className="flex flex-1 items-center gap-2">
             <Input
