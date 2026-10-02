@@ -277,6 +277,17 @@ function ListaPage() {
       </section>
 
       <section className="glass p-4">
+        <label className="mb-1 block text-xs text-muted-foreground">Nome da lista</label>
+        <div className="mb-4 flex items-center gap-2">
+          <Pencil className="size-4 shrink-0 text-muted-foreground" />
+          <Input
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            placeholder="Ex.: Compra do mês"
+          />
+        </div>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs text-muted-foreground">Total da compra</p>
