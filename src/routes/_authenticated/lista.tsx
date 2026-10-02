@@ -47,7 +47,7 @@ function ListaPage() {
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
   const { add, update, remove } = useItemMutations(list?.id);
-  const { clearAll, saveList, loadList, deleteList } = useListMutations(list?.id);
+  const { clearAll, saveList, renameList, loadList, deleteList } = useListMutations(list?.id);
   const { data: savedLists = [] } = useSavedLists();
   const totals = listTotals(items);
 
@@ -61,7 +61,25 @@ function ListaPage() {
   const [reference, setReference] = useState("");
   const [buyMode, setBuyMode] = useState(false);
   const [listName, setListName] = useState("");
+  const [editName, setEditName] = useState("");
+  const [nameLoadedFor, setNameLoadedFor] = useState<string | null>(null);
   const addedNames = new Set(items.map((i) => i.name.trim().toLowerCase()));
+
+  // Sincroniza o campo de edição com o nome salvo quando a lista muda.
+  useEffect(() => {
+    if (list && nameLoadedFor !== list.id) {
+      setEditName(list.name ?? "");
+      setNameLoadedFor(list.id);
+    }
+  }, [list, nameLoadedFor]);
+
+  function commitName() {
+    if (!list || editName === (list.name ?? "")) return;
+    renameList.mutate(editName, {
+      onSuccess: () => toast.success("Nome da lista atualizado."),
+      onError: () => toast.error("Não foi possível salvar o nome."),
+    });
+  }
 
   function handleDownload() {
     if (items.length === 0) return;
