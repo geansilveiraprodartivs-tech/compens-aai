@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Camera, Check, Pencil, RotateCcw, Loader2, AlertTriangle, X } from "lucide-react";
+import { Camera, Check, Pencil, RotateCcw, Loader2, AlertTriangle, X, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,9 @@ async function shrink(file: File): Promise<string> {
 export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
   const analyze = useServerFn(analyzeProductPhoto);
   const inputRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -37,6 +39,11 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
   const openCamera = () => {
     if (inputRef.current) inputRef.current.value = "";
     inputRef.current?.click();
+  };
+
+  const openGallery = () => {
+    if (galleryRef.current) galleryRef.current.value = "";
+    galleryRef.current?.click();
   };
 
   async function onFile(file?: File) {
@@ -76,7 +83,8 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
     try {
       await onAdd({ name: name.trim(), price: Number.isFinite(p) ? p : 0, quantity: 1, unit });
       toast.success(`${name.trim()} adicionado à lista.`);
-      openCamera(); // próximo produto
+      setOpen(false);
+      setChoosing(true); // próximo produto: escolhe câmera ou galeria de novo
     } catch {
       toast.error("Não foi possível adicionar.");
     } finally {
@@ -96,9 +104,50 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
         className="hidden"
         onChange={(e) => onFile(e.target.files?.[0])}
       />
-      <Button type="button" variant="outline" className="h-12 w-full" onClick={openCamera}>
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => onFile(e.target.files?.[0])}
+      />
+      <Button type="button" variant="outline" className="h-12 w-full" onClick={() => setChoosing(true)}>
         <Camera className="mr-2 size-5" /> Adicionar por Foto
       </Button>
+
+      {choosing && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 p-3 backdrop-blur sm:items-center">
+          <div className="glass w-full max-w-md space-y-2 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold">Adicionar por foto</h2>
+              <button onClick={() => setChoosing(false)} aria-label="Fechar">
+                <X className="size-5 text-muted-foreground" />
+              </button>
+            </div>
+            <Button
+              type="button"
+              className="gradient-brand glow h-12 w-full"
+              onClick={() => {
+                setChoosing(false);
+                openCamera();
+              }}
+            >
+              <Camera className="mr-2 size-5" /> Abrir a câmera
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full"
+              onClick={() => {
+                setChoosing(false);
+                openGallery();
+              }}
+            >
+              <ImagePlus className="mr-2 size-5" /> Escolher da galeria
+            </Button>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 p-3 backdrop-blur sm:items-center">
