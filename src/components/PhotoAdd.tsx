@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Camera, Check, Pencil, RotateCcw, Loader2, AlertTriangle, X } from "lucide-react";
+import { Camera, Check, Pencil, RotateCcw, Loader2, AlertTriangle, X, ImagePlus } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,9 @@ async function shrink(file: File): Promise<string> {
 export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
   const analyze = useServerFn(analyzeProductPhoto);
   const inputRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
