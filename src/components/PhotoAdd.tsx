@@ -41,6 +41,11 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
     inputRef.current?.click();
   };
 
+  const openGallery = () => {
+    if (galleryRef.current) galleryRef.current.value = "";
+    galleryRef.current?.click();
+  };
+
   async function onFile(file?: File) {
     if (!file) return;
     setOpen(true);
