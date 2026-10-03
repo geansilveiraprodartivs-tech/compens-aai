@@ -83,7 +83,8 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
     try {
       await onAdd({ name: name.trim(), price: Number.isFinite(p) ? p : 0, quantity: 1, unit });
       toast.success(`${name.trim()} adicionado à lista.`);
-      openCamera(); // próximo produto
+      setOpen(false);
+      setChoosing(true); // próximo produto: escolhe câmera ou galeria de novo
     } catch {
       toast.error("Não foi possível adicionar.");
     } finally {
