@@ -68,7 +68,10 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
 
   async function confirm() {
     const p = Number(price.replace(",", "."));
-    if (!name.trim()) return toast.error("Informe o nome do produto.");
+    if (!name.trim()) {
+      toast.error("Informe o nome do produto.");
+      return;
+    }
     setSaving(true);
     try {
       await onAdd({ name: name.trim(), price: Number.isFinite(p) ? p : 0, quantity: 1, unit });
