@@ -16,6 +16,48 @@ import {
 } from "@/hooks/useList";
 import { useProfile } from "@/hooks/useProfile";
 import { brl, UNITS } from "@/lib/compensai";
+import { PhotoAdd } from "@/components/PhotoAdd";
+
+function NameEdit({
+  value,
+  brand,
+  checked,
+  onSave,
+}: {
+  value: string;
+  brand: string | null;
+  checked: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  if (editing)
+    return (
+      <Input
+        autoFocus
+        value={text}
+        aria-label="Nome do produto"
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          setEditing(false);
+          if (text.trim() && text !== value) onSave(text.trim());
+          else setText(value);
+        }}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="h-8"
+      />
+    );
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className={`block max-w-full truncate text-left font-medium ${checked ? "line-through opacity-60" : ""}`}
+      aria-label={`Editar nome de ${value}`}
+    >
+      {value} {brand ? <span className="text-muted-foreground">· {brand}</span> : null}
+    </button>
+  );
+}
 import { useQueryClient } from "@tanstack/react-query";
 
 const QUICK_PRODUCTS = [
@@ -183,6 +225,9 @@ function ListaPage() {
 
   return (
     <div className="space-y-5">
+      <PhotoAdd
+        onAdd={(item) => add.mutateAsync({ ...item, brand: null, reference_price: null })}
+      />
       <form onSubmit={submit} className="glass space-y-3 p-4">
         <h2 className="font-bold">Adicionar produto</h2>
         <Input placeholder="Produto" value={name} onChange={(e) => setName(e.target.value)} />
@@ -393,9 +438,12 @@ function ListaPage() {
               onCheckedChange={(v) => update.mutate({ id: item.id, checked: Boolean(v) })}
             />
             <div className="min-w-0 flex-1">
-              <p className={`truncate font-medium ${item.checked ? "line-through opacity-60" : ""}`}>
-                {item.name} {item.brand ? <span className="text-muted-foreground">· {item.brand}</span> : null}
-              </p>
+              <NameEdit
+                value={item.name}
+                brand={item.brand}
+                checked={item.checked}
+                onSave={(name) => update.mutate({ id: item.id, name })}
+              />
               <p className="text-xs text-muted-foreground">
                 {item.unit}
                 {item.package_size ? ` de ${item.package_size} ${item.package_unit}` : ""}
