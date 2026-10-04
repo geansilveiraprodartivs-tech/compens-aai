@@ -8,7 +8,10 @@ export type PhotoProduct = {
   ok: boolean;
   name: string;
   price: number | null;
+  regular_price: number | null;
   unit: string | null;
+  package_size: number | null;
+  package_unit: string | null;
   price_note: string | null;
   problem: string | null;
 };
@@ -16,12 +19,15 @@ export type PhotoProduct = {
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["ok", "name", "price", "unit", "price_note", "problem"],
+  required: ["ok", "name", "price", "regular_price", "unit", "package_size", "package_unit", "price_note", "problem"],
   properties: {
     ok: { type: "boolean" },
     name: { type: "string" },
     price: { type: ["number", "null"] },
+    regular_price: { type: ["number", "null"] },
     unit: { type: ["string", "null"], enum: ["un", "kg", "g", "L", "ml", null] },
+    package_size: { type: ["number", "null"] },
+    package_unit: { type: ["string", "null"], enum: ["kg", "g", "L", "ml", "un", null] },
     price_note: { type: ["string", "null"] },
     problem: { type: ["string", "null"] },
   },
@@ -34,7 +40,9 @@ Extraia:
   "R$ 5,99" → 5.99; "R$ 12,90/unidade" → 12.90 (unit "un");
   "R$ 5,99/kg" → 5.99 (unit "kg"); "2 por R$ 10,00" → 5.00; "3 unidades por R$ 15,00" → 5.00.
   Em promoção, use o preço promocional (o que o cliente paga). Explique o cálculo em price_note (ex.: "2 por R$ 10,00").
+- regular_price: se a etiqueta mostrar DOIS valores (ex.: preço normal e preço promocional/clube/atacado), coloque aqui o outro valor por unidade; senão null.
 - unit: unidade de venda se visível ("un","kg","g","L","ml"), senão null.
+- package_size e package_unit: conteúdo da embalagem se visível (ex.: "5kg" → 5,"kg"; "900ml" → 900,"ml"; "12 rolos" → 12,"un"), senão null.
 - ok: false se não der para identificar claramente o produto OU o preço; então descreva em problem, em português, curto (ex.: "Preço não está legível").
 Nunca invente valores. Responda só o JSON.`;
 
@@ -108,6 +116,6 @@ export const analyzeProductPhoto = createServerFn({ method: "POST" })
       const p = JSON.parse(out) as PhotoProduct;
       return { ...p, name: (p.name ?? "").trim() };
     } catch {
-      return { ok: false, name: "", price: null, unit: null, price_note: null, problem: "Não consegui ler a foto." };
+      return { ok: false, name: "", price: null, regular_price: null, unit: null, package_size: null, package_unit: null, price_note: null, problem: "Não consegui ler a foto." };
     }
   });
