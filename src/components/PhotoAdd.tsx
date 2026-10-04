@@ -86,6 +86,10 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
       toast.error("Informe o nome do produto.");
       return;
     }
+    if (options.length > 1 && !price) {
+      toast.error("Escolha qual dos dois preços você quer.");
+      return;
+    }
     setSaving(true);
     try {
       await onAdd({ name: name.trim(), price: Number.isFinite(p) ? p : 0, quantity: 1, unit });
