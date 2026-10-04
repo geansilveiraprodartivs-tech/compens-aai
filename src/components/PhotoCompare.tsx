@@ -68,7 +68,7 @@ export function PhotoCompare({ onAdd, count }: { onAdd: (i: CompareItem) => void
     }
   }
 
-  function confirm() {
+  function confirm(): void {
     const p = Number(price.replace(",", "."));
     const q = Number(size.replace(",", "."));
     if (!name.trim()) return toast.error("Informe o nome do produto.");

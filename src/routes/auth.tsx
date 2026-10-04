@@ -101,13 +101,7 @@ function AuthPage() {
             </div>
           )}
           <Button type="submit" disabled={loading} className="w-full gradient-brand glow">
-            {loading
-              ? "Aguarde..."
-              : mode === "signup"
-                ? "Criar conta"
-                : mode === "reset"
-                  ? "Enviar link"
-                  : "Entrar"}
+            {loading ? "Aguarde..." : mode === "reset" ? "Enviar link" : "Entrar"}
           </Button>
         </form>
 
