@@ -35,6 +35,7 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
   const [price, setPrice] = useState("");
   const [unit, setUnit] = useState("un");
   const [saving, setSaving] = useState(false);
+  const [options, setOptions] = useState<number[]>([]);
 
   const openCamera = () => {
     if (inputRef.current) inputRef.current.value = "";
@@ -61,6 +62,12 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
       setPrice(r.price != null ? r.price.toFixed(2).replace(".", ",") : "");
       setUnit(r.unit ?? "un");
       setNote(r.price_note);
+      const opts =
+        r.price != null && r.regular_price != null && r.regular_price !== r.price
+          ? [r.price, r.regular_price].sort((a, b) => a - b)
+          : [];
+      setOptions(opts);
+      if (opts.length) setPrice("");
       if (!r.ok || !r.name || r.price == null) {
         setProblem(r.problem ?? "Não identifiquei claramente o produto ou o preço.");
         setEditing(true);
@@ -171,6 +178,29 @@ export function PhotoAdd({ onAdd }: { onAdd: AddFn }) {
                   <p className="flex items-start gap-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
                     <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {problem}
                   </p>
+                )}
+                {options.length > 1 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold">Esta etiqueta tem dois preços. Qual você quer usar?</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {options.map((v, i) => {
+                        const sel = price === v.toFixed(2).replace(".", ",");
+                        return (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => setPrice(v.toFixed(2).replace(".", ","))}
+                            className={`rounded-xl border p-3 text-left ${sel ? "border-primary bg-primary/15 glow" : "border-border bg-secondary/50"}`}
+                          >
+                            <span className="block text-xs text-muted-foreground">
+                              {i === 0 ? "Promocional" : "Normal"}
+                            </span>
+                            <b className="text-lg">{brl(v)}</b>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
                 {editing ? (
                   <div className="space-y-2">
