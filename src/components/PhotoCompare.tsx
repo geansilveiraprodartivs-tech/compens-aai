@@ -71,9 +71,9 @@ export function PhotoCompare({ onAdd, count }: { onAdd: (i: CompareItem) => void
   function confirm(): void {
     const p = Number(price.replace(",", "."));
     const q = Number(size.replace(",", "."));
-    if (!name.trim()) return toast.error("Informe o nome do produto.");
-    if (!p) return toast.error(options.length > 1 ? "Escolha qual dos dois preços você quer." : "Informe o preço.");
-    if (!q) return toast.error("Informe o tamanho da embalagem.");
+    if (!name.trim()) { toast.error("Informe o nome do produto."); return; }
+    if (!p) { toast.error(options.length > 1 ? "Escolha qual dos dois preços você quer." : "Informe o preço."); return; }
+    if (!q) { toast.error("Informe o tamanho da embalagem."); return; }
     onAdd({ label: name.trim(), price: p, quantity: q, unit });
     toast.success(`${name.trim()} adicionado à comparação.`);
     setOpen(false);
