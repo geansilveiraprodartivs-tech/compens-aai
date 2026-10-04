@@ -3,7 +3,8 @@ import { useState } from "react";
 import { Scale, Plus, Trash2, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { brl, unitPrice, UNITS } from "@/lib/compensai";
+import { brl, unitPrice, toBase, UNITS } from "@/lib/compensai";
+import { PhotoCompare } from "@/components/PhotoCompare";
 
 export const Route = createFileRoute("/_authenticated/comparar")({
   head: () => ({
@@ -76,6 +77,19 @@ function CompararPage() {
         para mostrar o melhor custo por unidade de medida.
       </p>
 
+      <PhotoCompare
+        count={options.length}
+        onAdd={(it) => setOptions((p) => [...p, { id: crypto.randomUUID(), store: "", ...it }])}
+      />
+      {ranked.length >= 2 && ranked[0] && (
+        <div className="glass glow-accent p-4 text-sm">
+          <p className="font-semibold">Vale mais a pena: {ranked[0].label}</p>
+          <p className="text-muted-foreground">
+            Menor preço por {ranked[0].up.base}: {ranked[0].up.label}. Veja abaixo quanto você economiza em relação a cada opção.
+          </p>
+        </div>
+      )}
+
       <form onSubmit={addOption} className="glass space-y-3 p-4">
         <Input placeholder="Produto / marca" value={label} onChange={(e) => setLabel(e.target.value)} />
         <Input placeholder="Mercado (opcional)" value={store} onChange={(e) => setStore(e.target.value)} />
@@ -125,6 +139,15 @@ function CompararPage() {
               <div className="text-right">
                 <p className="font-semibold">{o.up.label}</p>
                 {i === 0 && <p className="text-xs text-success">melhor custo-benefício</p>}
+                {i > 0 && ranked[0] && ranked[0].up.base === o.up.base && (() => {
+                  const save = o.price - ranked[0].up.value * toBase(o.quantity, o.unit).qty;
+                  const pct = o.up.value ? ((o.up.value - ranked[0].up.value) / o.up.value) * 100 : 0;
+                  return save > 0.004 ? (
+                    <p className="text-xs text-success">
+                      escolhendo o melhor você economiza {brl(save)} ({pct.toFixed(0)}%)
+                    </p>
+                  ) : null;
+                })()}
               </div>
             </div>
             <button

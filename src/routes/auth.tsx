@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +25,7 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Mode = "signin" | "signup" | "reset";
+type Mode = "signin" | "reset";
 
 function AuthPage() {
   const navigate = useNavigate();
@@ -54,21 +53,8 @@ function AuthPage() {
         setMode("signin");
         return;
       }
-      if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        if (!data.session) {
-          toast.success("Confirme seu e-mail para ativar a conta.");
-          return;
-        }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
       navigate({ to: "/app", replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível continuar");
@@ -77,24 +63,12 @@ function AuthPage() {
     }
   }
 
-  async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error("Não foi possível entrar com o Google");
-      return;
-    }
-    if (result.redirected) return;
-    navigate({ to: "/app", replace: true });
-  }
-
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-5 py-10">
       <Brand size={56} />
       <div className="glass glow mt-8 w-full max-w-sm p-6">
         <h1 className="text-xl font-bold">
-          {mode === "signup" ? "Criar conta" : mode === "reset" ? "Recuperar senha" : "Entrar"}
+          {mode === "reset" ? "Recuperar senha" : "Entrar"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Onde compensa comprar? Descubra em segundos.
@@ -127,26 +101,23 @@ function AuthPage() {
             </div>
           )}
           <Button type="submit" disabled={loading} className="w-full gradient-brand glow">
-            {loading
-              ? "Aguarde..."
-              : mode === "signup"
-                ? "Criar conta"
-                : mode === "reset"
-                  ? "Enviar link"
-                  : "Entrar"}
+            {loading ? "Aguarde..." : mode === "reset" ? "Enviar link" : "Entrar"}
           </Button>
         </form>
 
-        <Button variant="outline" onClick={google} className="mt-3 w-full">
-          Continuar com Google
+        <Button asChild variant="outline" className="mt-3 w-full">
+          <a
+            href={`https://wa.me/5551985839571?text=${encodeURIComponent("Entre em contato para gerar seu login!")}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Entre em contato pelo WhatsApp para gerar seu login
+          </a>
         </Button>
 
-        <div className="mt-4 flex justify-between text-xs text-muted-foreground">
-          <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")}>
-            {mode === "signup" ? "Já tenho conta" : "Criar conta"}
-          </button>
-          <button type="button" onClick={() => setMode("reset")}>
-            Esqueci a senha
+        <div className="mt-4 flex justify-end text-xs text-muted-foreground">
+          <button type="button" onClick={() => setMode(mode === "reset" ? "signin" : "reset")}>
+            {mode === "reset" ? "Voltar ao login" : "Esqueci a senha"}
           </button>
         </div>
       </div>
