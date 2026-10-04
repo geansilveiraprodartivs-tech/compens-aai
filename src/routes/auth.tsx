@@ -2,7 +2,6 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +25,7 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Mode = "signin" | "signup" | "reset";
+type Mode = "signin" | "reset";
 
 function AuthPage() {
   const navigate = useNavigate();
@@ -69,7 +68,7 @@ function AuthPage() {
       <Brand size={56} />
       <div className="glass glow mt-8 w-full max-w-sm p-6">
         <h1 className="text-xl font-bold">
-          {mode === "signup" ? "Criar conta" : mode === "reset" ? "Recuperar senha" : "Entrar"}
+          {mode === "reset" ? "Recuperar senha" : "Entrar"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Onde compensa comprar? Descubra em segundos.
