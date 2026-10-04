@@ -54,39 +54,14 @@ function AuthPage() {
         setMode("signin");
         return;
       }
-      if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        if (!data.session) {
-          toast.success("Confirme seu e-mail para ativar a conta.");
-          return;
-        }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
       navigate({ to: "/app", replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível continuar");
     } finally {
       setLoading(false);
     }
-  }
-
-  async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (result.error) {
-      toast.error("Não foi possível entrar com o Google");
-      return;
-    }
-    if (result.redirected) return;
-    navigate({ to: "/app", replace: true });
   }
 
   return (
@@ -137,16 +112,19 @@ function AuthPage() {
           </Button>
         </form>
 
-        <Button variant="outline" onClick={google} className="mt-3 w-full">
-          Continuar com Google
+        <Button asChild variant="outline" className="mt-3 w-full">
+          <a
+            href={`https://wa.me/5551985839571?text=${encodeURIComponent("Entre em contato para gerar seu login!")}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Entre em contato pelo WhatsApp para gerar seu login
+          </a>
         </Button>
 
-        <div className="mt-4 flex justify-between text-xs text-muted-foreground">
-          <button type="button" onClick={() => setMode(mode === "signup" ? "signin" : "signup")}>
-            {mode === "signup" ? "Já tenho conta" : "Criar conta"}
-          </button>
-          <button type="button" onClick={() => setMode("reset")}>
-            Esqueci a senha
+        <div className="mt-4 flex justify-end text-xs text-muted-foreground">
+          <button type="button" onClick={() => setMode(mode === "reset" ? "signin" : "reset")}>
+            {mode === "reset" ? "Voltar ao login" : "Esqueci a senha"}
           </button>
         </div>
       </div>
