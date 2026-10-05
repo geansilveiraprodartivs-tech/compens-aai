@@ -79,6 +79,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "theme-color", content: "#18121e" },
       { title: "CompensAI — Compare. Escolha. Economize." },
       {
         name: "description",
@@ -103,6 +104,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: "https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Manrope:wght@400;500;600;700&display=swap",
       },
       { rel: "icon", href: "/favicon.ico", sizes: "16x16 32x32 48x48 64x64 128x128 256x256" },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      {
+        rel: "apple-touch-icon",
+        href: "/__l5e/assets-v1/065ac6b3-5bf0-4ab1-b4f1-d42d09bec6f8/compensai-apple-180.png",
+        sizes: "180x180",
+      },
     ],
   }),
   shellComponent: RootShell,
