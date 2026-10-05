@@ -1,0 +1,29 @@
+{
+  "name": "CompensAI",
+  "short_name": "CompensAI",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#18121e",
+  "theme_color": "#18121e",
+  "icons": [
+    {
+      "src": "/__l5e/assets-v1/d11a726d-34e7-4958-8fba-f18febe1dfcb/compensai-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/__l5e/assets-v1/a79b0548-c9a2-4671-8be6-2ad8da0bcd39/compensai-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/__l5e/assets-v1/1e09da1d-dd79-400a-9c04-60cf2a1bcac9/compensai-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

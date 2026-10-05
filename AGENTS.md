@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+Home-screen installation uses a manifest and CDN-backed PNG icon variants, without a service worker; offline caching is not requested.
