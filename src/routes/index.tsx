@@ -4,6 +4,7 @@ import { ArrowRight, Camera, CheckCheck, MapPin, PiggyBank, Scale, Trophy } from
 import { supabase } from "@/integrations/supabase/client";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
+import shareImage from "@/assets/compensai-green-share.jpg.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -15,19 +16,19 @@ export const Route = createFileRoute("/")({
           "O CompensAI compara mercados perto de você, mostra o que compensa comprar e quanto você economiza em cada compra.",
       },
       { property: "og:title", content: "CompensAI — Onde compensa comprar?" },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       {
         property: "og:description",
         content: "Compare mercados, monte sua lista e saiba exatamente quanto está economizando.",
       },
       {
         property: "og:image",
-        content:
-          "https://compens-aai.lovable.app/__l5e/assets-v1/27615e7e-c1e2-4c0c-a2cb-4b74f8c1bc73/og-image.jpg",
+        content: `https://compens-aai.lovable.app${shareImage.url}`,
       },
       {
         name: "twitter:image",
-        content:
-          "https://compens-aai.lovable.app/__l5e/assets-v1/27615e7e-c1e2-4c0c-a2cb-4b74f8c1bc73/og-image.jpg",
+        content: `https://compens-aai.lovable.app${shareImage.url}`,
       },
     ],
   }),

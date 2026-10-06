@@ -1,4 +1,4 @@
-import logo from "@/assets/compensai-logo.png.asset.json";
+import logo from "@/assets/compensai-green-icon.png.asset.json";
 
 export function Brand({ size = 44 }: { size?: number }) {
   return (
