@@ -16,13 +16,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { data: profile } = useProfile();
 
   return (
-    <div className="min-h-screen pb-24">
-      <header className="sticky top-0 z-20 glass rounded-none border-x-0 border-t-0 px-4 py-3">
+    <div className="min-h-screen pb-24 md:pb-0">
+      <header className="sticky top-0 z-20 border-b border-border bg-background/90 px-4 py-3 backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
-          <Brand size={36} />
+          <Brand size={34} />
           <Link
             to="/perfil"
-            className="flex max-w-[45%] items-center gap-1.5 rounded-full border border-border bg-secondary/60 px-3 py-1.5 text-xs text-muted-foreground"
+            className="flex max-w-[45%] items-center gap-1.5 rounded-lg border border-border bg-secondary/60 px-3 py-1.5 text-xs text-muted-foreground"
           >
             <MapPin className="size-3.5 shrink-0 text-accent" />
             <span className="truncate">{profile?.location_label ?? "Definir local"}</span>
@@ -30,9 +30,32 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-2xl px-4 py-5">{children}</main>
+      <div className="mx-auto w-full max-w-6xl md:grid md:min-h-screen md:grid-cols-[230px_1fr] md:gap-6 md:p-6">
+        <aside className="sticky top-6 hidden h-[calc(100vh-3rem)] flex-col rounded-xl border border-sidebar-border bg-sidebar p-5 md:flex">
+          <Brand size={40} />
+          <nav className="mt-10 space-y-2">
+            {NAV.map(({ to, label, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
+                activeProps={{ className: "bg-sidebar-accent text-primary" }}
+                inactiveProps={{ className: "text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground" }}
+                className="flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold transition-colors"
+              >
+                <Icon className="size-4" /> {label}
+              </Link>
+            ))}
+          </nav>
+          <Link to="/perfil" className="mt-auto rounded-lg border border-sidebar-border bg-sidebar-accent/50 p-3 text-xs text-sidebar-foreground/70">
+            <span className="flex items-center gap-2 font-semibold text-sidebar-foreground"><MapPin className="size-4 text-primary" /> Minha localização</span>
+            <span className="mt-1 block truncate">{profile?.location_label ?? "Definir local"}</span>
+          </Link>
+        </aside>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 glass rounded-none border-x-0 border-b-0 px-2 py-2">
+        <main className="w-full px-4 py-5 md:min-w-0 md:px-0 md:py-2">{children}</main>
+      </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-2 py-2 backdrop-blur-xl md:hidden">
         <ul className="mx-auto flex max-w-2xl items-center justify-between">
           {NAV.map(({ to, label, icon: Icon }) => (
             <li key={to} className="flex-1">
@@ -47,8 +70,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <span
                       className={
                         isActive
-                          ? "gradient-brand glow rounded-xl p-2 text-primary-foreground"
-                          : "rounded-xl p-2"
+                          ? "rounded-lg bg-primary p-2 text-primary-foreground"
+                          : "rounded-lg p-2"
                       }
                     >
                       <Icon className="size-4" />
