@@ -4,10 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/*
- * CompensAI design system — dark premium, preto / roxo / lilás / magenta.
- * Todos os valores são tokens semânticos. Nunca use cores fixas nos componentes.
- */
+/* CompensAI — central de compras em verde menta sobre fundo verde quase preto. */
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -57,53 +54,53 @@
 
 :root {
   --radius: 1.1rem;
-  --background: oklch(0.13 0.03 300);
-  --foreground: oklch(0.97 0.01 310);
-  --card: oklch(0.18 0.04 300);
-  --card-foreground: oklch(0.97 0.01 310);
-  --popover: oklch(0.17 0.04 300);
-  --popover-foreground: oklch(0.97 0.01 310);
-  --primary: oklch(0.62 0.25 310);
-  --primary-foreground: oklch(0.99 0.005 310);
-  --secondary: oklch(0.25 0.06 300);
-  --secondary-foreground: oklch(0.96 0.01 310);
-  --muted: oklch(0.22 0.04 300);
-  --muted-foreground: oklch(0.72 0.03 305);
-  --accent: oklch(0.68 0.27 350);
-  --accent-foreground: oklch(0.99 0.005 350);
+  --background: oklch(0.19 0.018 170);
+  --foreground: oklch(0.98 0.006 170);
+  --card: oklch(0.235 0.022 166);
+  --card-foreground: oklch(0.98 0.006 170);
+  --popover: oklch(0.22 0.022 166);
+  --popover-foreground: oklch(0.98 0.006 170);
+  --primary: oklch(0.79 0.17 160);
+  --primary-foreground: oklch(0.19 0.018 170);
+  --secondary: oklch(0.29 0.032 166);
+  --secondary-foreground: oklch(0.98 0.006 170);
+  --muted: oklch(0.27 0.025 166);
+  --muted-foreground: oklch(0.72 0.025 166);
+  --accent: oklch(0.87 0.13 164);
+  --accent-foreground: oklch(0.19 0.018 170);
   --destructive: oklch(0.62 0.24 25);
   --destructive-foreground: oklch(0.98 0.01 25);
-  --success: oklch(0.75 0.19 155);
-  --success-foreground: oklch(0.15 0.03 155);
-  --border: oklch(0.32 0.05 305 / 55%);
-  --input: oklch(0.3 0.05 305 / 70%);
-  --ring: oklch(0.68 0.24 320);
-  --chart-1: oklch(0.62 0.25 310);
-  --chart-2: oklch(0.68 0.27 350);
+  --success: oklch(0.79 0.17 160);
+  --success-foreground: oklch(0.19 0.018 170);
+  --border: oklch(0.43 0.045 166 / 45%);
+  --input: oklch(0.36 0.035 166 / 72%);
+  --ring: oklch(0.79 0.17 160);
+  --chart-1: oklch(0.79 0.17 160);
+  --chart-2: oklch(0.87 0.13 164);
   --chart-3: oklch(0.75 0.19 155);
   --chart-4: oklch(0.72 0.16 285);
   --chart-5: oklch(0.8 0.15 90);
-  --sidebar: oklch(0.16 0.04 300);
-  --sidebar-foreground: oklch(0.96 0.01 310);
-  --sidebar-primary: oklch(0.62 0.25 310);
-  --sidebar-primary-foreground: oklch(0.99 0.005 310);
-  --sidebar-accent: oklch(0.25 0.06 300);
-  --sidebar-accent-foreground: oklch(0.96 0.01 310);
-  --sidebar-border: oklch(0.32 0.05 305 / 55%);
-  --sidebar-ring: oklch(0.68 0.24 320);
+  --sidebar: oklch(0.16 0.018 170);
+  --sidebar-foreground: oklch(0.98 0.006 170);
+  --sidebar-primary: oklch(0.79 0.17 160);
+  --sidebar-primary-foreground: oklch(0.19 0.018 170);
+  --sidebar-accent: oklch(0.26 0.032 166);
+  --sidebar-accent-foreground: oklch(0.98 0.006 170);
+  --sidebar-border: oklch(0.43 0.045 166 / 45%);
+  --sidebar-ring: oklch(0.79 0.17 160);
 
   --gradient-brand: linear-gradient(
     135deg,
-    oklch(0.62 0.25 310) 0%,
-    oklch(0.68 0.27 350) 100%
+    oklch(0.79 0.17 160) 0%,
+    oklch(0.87 0.13 164) 100%
   );
   --gradient-surface: linear-gradient(
     160deg,
-    oklch(0.22 0.06 305 / 85%) 0%,
-    oklch(0.16 0.04 300 / 75%) 100%
+    oklch(0.255 0.03 166 / 94%) 0%,
+    oklch(0.205 0.022 170 / 96%) 100%
   );
-  --glow-brand: 0 0 0 1px oklch(0.62 0.25 310 / 25%), 0 18px 50px -20px oklch(0.62 0.25 310 / 60%);
-  --glow-accent: 0 0 0 1px oklch(0.68 0.27 350 / 30%), 0 18px 50px -18px oklch(0.68 0.27 350 / 60%);
+  --glow-brand: 0 0 0 1px oklch(0.79 0.17 160 / 22%), 0 18px 45px -24px oklch(0.79 0.17 160 / 48%);
+  --glow-accent: 0 0 0 1px oklch(0.87 0.13 164 / 26%), 0 18px 45px -24px oklch(0.87 0.13 164 / 45%);
 }
 
 @layer base {
@@ -115,15 +112,13 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    background-image:
-      radial-gradient(60% 40% at 15% 0%, oklch(0.62 0.25 310 / 22%) 0%, transparent 70%),
-      radial-gradient(50% 35% at 90% 10%, oklch(0.68 0.27 350 / 18%) 0%, transparent 70%);
+    background-image: linear-gradient(150deg, oklch(0.205 0.025 170), var(--color-background) 55%);
     background-attachment: fixed;
   }
 
   h1, h2, h3, h4 {
     font-family: var(--font-display);
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
 }
 
@@ -131,7 +126,7 @@
   background-image: var(--gradient-surface);
   backdrop-filter: blur(14px);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--radius-lg);
 }
 
 @utility gradient-brand {

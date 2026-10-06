@@ -58,7 +58,9 @@ function HomePage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
+      <div className="pt-1"><p className="text-sm font-semibold text-primary">Central de compras</p><h1 className="mt-1 text-2xl font-bold">Onde compensa comprar hoje?</h1></div>
+      <div className="grid gap-4 lg:grid-cols-2">
       <section className="glass p-4">
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <MapPin className="size-3.5 text-accent" /> Minha localização
@@ -79,9 +81,10 @@ function HomePage() {
           </Link>
         </Button>
       </section>
+      </div>
 
-      <section>
-        <div className="flex items-center justify-between">
+      <section className="rounded-xl border border-border bg-card p-4 md:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-4">
           <h2 className="flex items-center gap-2 text-lg font-bold">
             <Trophy className="size-5 text-accent" /> Melhores ofertas da semana
           </h2>
@@ -107,12 +110,12 @@ function HomePage() {
         )}
 
         {ranking && (
-          <ul className="mt-3 space-y-3">
+          <ul className="mt-3 divide-y divide-border">
             {ranking.stores.map((s, index) => (
-              <li key={s.name} className={`glass p-4 ${index === 0 ? "glow-accent border-accent/40" : ""}`}>
+              <li key={s.name} className={`py-4 ${index === 0 ? "text-foreground" : ""}`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs text-muted-foreground">#{index + 1}</p>
+                    <p className="text-xs font-bold text-primary">#{index + 1}</p>
                     <p className="font-display text-lg font-bold">{s.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {s.offersCount > 0

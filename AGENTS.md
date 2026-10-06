@@ -10,3 +10,5 @@
 <!-- LOVABLE:END -->
 
 Home-screen installation uses a manifest and CDN-backed PNG icon variants, without a service worker; offline caching is not requested.
+
+The authenticated experience uses a responsive shopping-command-center shell: desktop sidebar and mobile bottom navigation, preserving the same five destinations.
