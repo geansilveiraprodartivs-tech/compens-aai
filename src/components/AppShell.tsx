@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Home, ShoppingCart, Scale, PiggyBank, User, MapPin } from "lucide-react";
+import { Home, ShoppingCart, Scale, PiggyBank, User, MapPin, QrCode } from "lucide-react";
 import type { ReactNode } from "react";
 import { Brand } from "@/components/Brand";
 import { useProfile } from "@/hooks/useProfile";
@@ -9,6 +9,7 @@ const NAV = [
   { to: "/lista", label: "Lista", icon: ShoppingCart },
   { to: "/comparar", label: "Comparar", icon: Scale },
   { to: "/economia", label: "Economia", icon: PiggyBank },
+  { to: "/pix", label: "Pix", icon: QrCode },
   { to: "/perfil", label: "Perfil", icon: User },
 ] as const;
 
