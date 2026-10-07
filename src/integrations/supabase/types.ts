@@ -169,6 +169,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_url: string | null
           budget: number | null
           cep: string | null
           city: string | null
@@ -183,6 +184,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          avatar_url?: string | null
           budget?: number | null
           cep?: string | null
           city?: string | null
@@ -197,6 +199,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          avatar_url?: string | null
           budget?: number | null
           cep?: string | null
           city?: string | null

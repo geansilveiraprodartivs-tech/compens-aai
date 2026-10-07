@@ -18,6 +18,7 @@ import { Route as AuthenticatedCompararRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedEconomiaRouteImport } from './routes/_authenticated/economia'
 import { Route as AuthenticatedListaRouteImport } from './routes/_authenticated/lista'
 import { Route as AuthenticatedPerfilRouteImport } from './routes/_authenticated/perfil'
+import { Route as AuthenticatedPixRouteImport } from './routes/_authenticated/pix'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -63,6 +64,11 @@ const AuthenticatedPerfilRoute = AuthenticatedPerfilRouteImport.update({
   path: '/perfil',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedPixRoute = AuthenticatedPixRouteImport.update({
+  id: '/pix',
+  path: '/pix',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -73,6 +79,7 @@ export interface FileRoutesByFullPath {
   '/economia': typeof AuthenticatedEconomiaRoute
   '/lista': typeof AuthenticatedListaRoute
   '/perfil': typeof AuthenticatedPerfilRoute
+  '/pix': typeof AuthenticatedPixRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/economia': typeof AuthenticatedEconomiaRoute
   '/lista': typeof AuthenticatedListaRoute
   '/perfil': typeof AuthenticatedPerfilRoute
+  '/pix': typeof AuthenticatedPixRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/_authenticated/economia': typeof AuthenticatedEconomiaRoute
   '/_authenticated/lista': typeof AuthenticatedListaRoute
   '/_authenticated/perfil': typeof AuthenticatedPerfilRoute
+  '/_authenticated/pix': typeof AuthenticatedPixRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/economia'
     | '/lista'
     | '/perfil'
+    | '/pix'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/economia'
     | '/lista'
     | '/perfil'
+    | '/pix'
   id:
     | '__root__'
     | '/'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/_authenticated/economia'
     | '/_authenticated/lista'
     | '/_authenticated/perfil'
+    | '/_authenticated/pix'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -202,6 +214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPerfilRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/pix': {
+      id: '/_authenticated/pix'
+      path: '/pix'
+      fullPath: '/pix'
+      preLoaderRoute: typeof AuthenticatedPixRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -211,6 +230,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedEconomiaRoute: typeof AuthenticatedEconomiaRoute
   AuthenticatedListaRoute: typeof AuthenticatedListaRoute
   AuthenticatedPerfilRoute: typeof AuthenticatedPerfilRoute
+  AuthenticatedPixRoute: typeof AuthenticatedPixRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -219,6 +239,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedEconomiaRoute: AuthenticatedEconomiaRoute,
   AuthenticatedListaRoute: AuthenticatedListaRoute,
   AuthenticatedPerfilRoute: AuthenticatedPerfilRoute,
+  AuthenticatedPixRoute: AuthenticatedPixRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

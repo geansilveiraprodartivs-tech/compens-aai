@@ -12,6 +12,7 @@ export type Profile = {
   lng: number | null;
   radius_km: number;
   budget: number | null;
+  avatar_url: string | null;
 };
 
 export function useProfile() {
