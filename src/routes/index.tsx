@@ -88,6 +88,7 @@ function Landing() {
         </section>
         </div>
       </main>
+      <PixSection />
     </div>
   );
 }
