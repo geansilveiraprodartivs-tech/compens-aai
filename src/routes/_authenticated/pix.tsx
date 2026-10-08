@@ -10,15 +10,52 @@ export const Route = createFileRoute("/_authenticated/pix")({
   head: () => ({
     meta: [
       { title: "Pagar compra — CompensAI" },
-      { name: "description", content: "Pague sua compra com Pix pelo app do seu banco e registre no CompensAI." },
+      {
+        name: "description",
+        content: "Pague sua compra pelo app do seu banco e registre no CompensAI.",
+      },
       { property: "og:title", content: "Pagar compra — CompensAI" },
-      { property: "og:description", content: "Pague sua compra com Pix pelo app do seu banco e registre no CompensAI." },
+      {
+        property: "og:description",
+        content: "Pague sua compra pelo app do seu banco e registre no CompensAI.",
+      },
     ],
   }),
   component: PagarCompra,
 });
 
 type Payment = { id: string; status: string; created_at: string; paid_at: string | null };
+
+/** Descobre a plataforma para orientar o seletor nativo de aplicativos/bancos. */
+function platformHint() {
+  const ua = navigator.userAgent;
+  const isIOS =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+  if (isAndroid)
+    return "No Android, vai abrir o seletor de aplicativos (como “Abrir com...”) para você escolher o app do seu banco.";
+  if (isIOS)
+    return "No iPhone, vai abrir a folha de compartilhamento do iOS para você escolher o app do seu banco.";
+  return "Abra o app do seu banco e pague a compra no caixa.";
+}
+
+/** Usa o seletor nativo do aparelho para encaminhar para o app do banco. */
+async function openBankAppSelector() {
+  const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+  if (nav.share) {
+    try {
+      await nav.share({
+        title: "Pagar compra",
+        text: "Pagamento no CompensAI — abra o app do seu banco e pague a compra no caixa. O valor é definido no caixa.",
+      });
+    } catch {
+      /* usuário fechou o seletor */
+    }
+  } else {
+    toast.info(platformHint());
+  }
+}
 
 function PagarCompra() {
   const qc = useQueryClient();
@@ -56,23 +93,17 @@ function PagarCompra() {
         .insert({ user_id: u.user!.id, method: "pix", status: "pending" })
         .select("id")
         .single();
-      if (error) return toast.error("Não foi possível iniciar.");
+      if (error) {
+        toast.error("Não foi possível iniciar.");
+        return;
+      }
       id = data.id;
       qc.invalidateQueries({ queryKey: ["payments"] });
     }
     setCurrent(id);
-    // Abre o seletor nativo do sistema (Android "Abrir com..." / iPhone folha de compartilhamento)
-    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
-    if (nav.share) {
-      try {
-        await nav.share({ title: "Pagar compra com Pix", text: "Pagar compra com Pix" });
-      } catch {
-        /* usuário fechou o seletor */
-      }
-    } else {
-      toast.info("Abra o app do seu banco e pague com Pix no caixa.");
-    }
+    await openBankAppSelector();
     setStep("ask");
+    return;
   }
 
   async function answer(paid: boolean) {
@@ -82,7 +113,9 @@ function PagarCompra() {
       .update(paid ? { status: "paid", paid_at: new Date().toISOString() } : { status: "pending" })
       .eq("id", current);
     qc.invalidateQueries({ queryKey: ["payments"] });
-    toast[paid ? "success" : "info"](paid ? "Compra marcada como paga." : "Compra mantida como não paga.");
+    toast[paid ? "success" : "info"](
+      paid ? "Compra marcada como paga." : "Compra mantida como não paga.",
+    );
     setCurrent(null);
     setStep("start");
   }
@@ -103,7 +136,9 @@ function PagarCompra() {
             <p className="text-sm text-muted-foreground">
               O valor é definido no caixa. O CompensAI não mostra, calcula nem envia valores.
             </p>
-            <Button className="w-full" onClick={() => setStep("method")}>Pagar compra</Button>
+            <Button className="w-full" onClick={() => setStep("method")}>
+              Pagar compra
+            </Button>
           </>
         )}
         {step === "method" && (
@@ -112,10 +147,10 @@ function PagarCompra() {
             <Button className="w-full" onClick={() => payWithPix()}>
               <QrCode className="mr-2 size-4" /> Pix
             </Button>
-            <p className="text-xs text-muted-foreground">
-              Vai abrir o seletor do seu celular para você escolher o app do banco.
-            </p>
-            <Button variant="ghost" className="w-full" onClick={() => setStep("start")}>Voltar</Button>
+            <p className="text-xs text-muted-foreground">{platformHint()}</p>
+            <Button variant="ghost" className="w-full" onClick={() => setStep("start")}>
+              Voltar
+            </Button>
           </>
         )}
         {step === "ask" && (
