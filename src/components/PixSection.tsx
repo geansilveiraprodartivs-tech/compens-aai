@@ -21,9 +21,9 @@ export function PixSection() {
             </h2>
             <p className="mt-4 max-w-lg text-muted-foreground">
               Ao finalizar a compra, toque em <strong>Pagar compra</strong> e escolha a forma de
-              pagamento. O Pix abre o seletor de aplicativos do seu celular: você escolhe o app do
-              seu banco, paga no caixa e confirma no CompensAI. O valor é definido no caixa — nada é
-              cobrado ou enviado pelo CompensAI.
+              pagamento. O Pix exibe um <strong>QR Code</strong> e um <strong>código copia-e-cola</strong>{" "}
+              para você pagar no app do seu banco — abrindo o banco direto quando possível. O valor
+              é definido no caixa — nada é cobrado ou enviado pelo CompensAI.
             </p>
             <Button
               asChild
