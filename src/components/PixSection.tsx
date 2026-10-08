@@ -20,10 +20,9 @@ export function PixSection() {
               Pague suas compras pelo CompensAI
             </h2>
             <p className="mt-4 max-w-lg text-muted-foreground">
-              Ao finalizar a compra, toque em <strong>Pagar compra</strong> e escolha a forma de
-              pagamento. O Pix exibe um <strong>QR Code</strong> e um <strong>código copia-e-cola</strong>{" "}
-              para você pagar no app do seu banco — abrindo o banco direto quando possível. O valor
-              é definido no caixa — nada é cobrado ou enviado pelo CompensAI.
+              Ao finalizar a compra, toque em <strong>Pagar compra</strong> e escolha o app do seu
+              banco. O CompensAI abre o aplicativo do banco para você pagar via <strong>PIX</strong>{" "}
+              direto por lá. O valor é definido no caixa — nada é cobrado ou enviado pelo CompensAI.
             </p>
             <Button
               asChild

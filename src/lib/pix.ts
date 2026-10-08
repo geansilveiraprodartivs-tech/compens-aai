@@ -1,17 +1,35 @@
-import { supabase } from "@/integrations/supabase/client";
-
 export type DevicePlatform = "android" | "ios" | "other";
 
-/** Pagamento PIX carregado do provedor. `pending` = nenhum provedor configurado ainda. */
-export type PixPayment =
-  | {
-      status: "integrated";
-      provider: string;
-      qrCode: string;
-      code: string;
-      deepLink?: string;
-    }
-  | { status: "pending"; provider: null };
+export type BankApp = {
+  id: string;
+  name: string;
+  url: string;
+};
+
+/**
+ * Apps de banco compatíveis com PIX. URLs oficiais dos bancos (públicas e reais).
+ * Ao abrir, o Android (App Links) e o iOS (Universal Links) encaminham direto para
+ * o aplicativo quando instalado; caso contrário, abrem o site oficial do banco.
+ *
+ * LIMITAÇÃO TÉCNICA (honesta): o navegador não consegue listar os apps instalados
+ * no aparelho nem leva sozinho à tela de PIX do banco. Isso só é possível com uma
+ * cobrança PIX gerada por um provedor de pagamento (que fornece um deep link real
+ * da transação). Enquanto não existir essa integração, o pagamento é feito pelo
+ * usuário dentro do app do banco e a quitação é confirmada manualmente.
+ */
+export const BANK_APPS: BankApp[] = [
+  { id: "nubank", name: "Nubank", url: "https://nubank.com.br" },
+  { id: "inter", name: "Banco Inter", url: "https://www.bancointer.com.br" },
+  { id: "picpay", name: "PicPay", url: "https://picpay.com.br" },
+  { id: "caixa-tem", name: "Caixa Tem", url: "https://caixatem.caixa.gov.br" },
+  { id: "itau", name: "Itaú", url: "https://www.itau.com.br" },
+  { id: "bb", name: "Banco do Brasil", url: "https://www.bb.com.br" },
+  { id: "bradesco", name: "Bradesco", url: "https://banco.bradesco" },
+  { id: "santander", name: "Santander", url: "https://www.santander.com.br" },
+  { id: "pagbank", name: "PagBank", url: "https://pagbank.com.br" },
+  { id: "c6", name: "C6 Bank", url: "https://www.c6bank.com.br" },
+  { id: "mercadopago", name: "Mercado Pago", url: "https://www.mercadopago.com.br" },
+];
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -26,87 +44,19 @@ export function getPlatform(): DevicePlatform {
 
 export function platformHint(platform: DevicePlatform = getPlatform()): string {
   if (platform === "android")
-    return "No Android, tentamos abrir o app do banco direto (se disponível). Se não abrir, use o QR Code ou o código PIX copia-e-cola.";
+    return "No Android, o app do banco abre direto pelo link (App Links). Se não abrir, o app não está instalado — instale o app do seu banco e pague por lá.";
   if (platform === "ios")
-    return "No iPhone, use o QR Code ou o código PIX copia-e-cola. Se o banco tiver link compatível, o app abre pelo botão “Abrir app do banco”.";
-  return "Use o QR Code ou o código PIX copia-e-cola abaixo no app do seu banco.";
+    return "No iPhone, o app do banco abre pelo recurso de Universal Links do iOS. Se não abrir, o app não está instalado — instale o app do seu banco e pague por lá.";
+  return "Abra o app do seu banco no celular e faça o pagamento PIX por lá.";
 }
 
-/**
- * Cria a cobrança PIX junto ao provedor de pagamento.
- *
- * ESTRUTURA PRONTA PARA INTEGRAÇÃO REAL. Para o pagamento funcionar de verdade, falta:
- *   1) Credenciais do provedor (ex.: Mercado Pago, Pagar.me, Cielo, etc.) em uma Edge Function
- *      (supabase/functions/pix/charge.ts), nunca no cliente.
- *   2) A Edge Function criar a cobrança via API e devolver o payload copia-e-cola (`code`),
- *      o QR Code (`qrCode`) e, se o banco fornecer, o deep link (`deepLink`).
- *   3) Um webhook autenticado (ex.: supabase/functions/pix/webhook.ts) que o provedor chama
- *      quando a cobrança é paga, atualizando `purchase_payments.status` de forma confiável.
- *
- * Enquanto isso, retornamos `pending` e a interface deixa explícito que o PIX é confirmado
- * manualmente (não é verificação bancária).
- */
-export async function createPixPayment(): Promise<PixPayment> {
-  // Exemplo do que ativar com o provedor conectado:
-  // const { data: u } = await supabase.auth.getUser();
-  // const { data } = await supabase.functions.invoke("pix/charge", {
-  //   body: { user_id: u.data.user?.id },
-  // });
-  // if (data?.pix) {
-  //   return {
-  //     status: "integrated",
-  //     provider: data.provider,
-  //     qrCode: data.pix.qr_base64,
-  //     code: data.pix.code,
-  //     deepLink: data.pix.deep_link,
-  //   };
-  // }
-
-  void supabase;
-  return { status: "pending", provider: null };
-}
-
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = (document.execCommand as unknown as (c: string) => boolean)("copy");
-      ta.remove();
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function toIntentUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const scheme = u.protocol.replace(":", "");
-    if (scheme === "http" || scheme === "https") return url;
-    const rest = url.slice(scheme.length + 3);
-    return `intent://${rest}#Intent;scheme=${scheme};end`;
-  } catch {
-    return url;
-  }
-}
-
-/** Abre o app do banco por deep link (Android via intent, iOS via custom scheme / universal link). */
-export function openBankDeepLink(url: string): boolean {
+/** Abre o app do banco via deep link real (https App Links / Universal Links), em nova aba. */
+export function openBankApp(bank: BankApp): boolean {
   try {
     const link = document.createElement("a");
-    link.href = getPlatform() === "android" ? toIntentUrl(url) : url;
-    link.rel = "noopener";
-    link.target = "_self";
+    link.href = bank.url;
+    link.rel = "noopener noreferrer";
+    link.target = "_blank";
     document.body.appendChild(link);
     link.click();
     link.remove();
