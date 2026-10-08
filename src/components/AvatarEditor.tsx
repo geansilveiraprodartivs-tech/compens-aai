@@ -60,7 +60,7 @@ export function AvatarEditor({
     setBusy(true);
     try {
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
-      const objectPath = `avatars/${userId}/${Date.now()}-${Math.random()
+      const objectPath = `${userId}/${Date.now()}-${Math.random()
         .toString(36)
         .slice(2, 8)}.${ext}`;
 
