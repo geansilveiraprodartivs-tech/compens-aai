@@ -60,8 +60,8 @@ function Landing() {
       <main className="mx-auto grid min-h-[calc(100vh-73px)] max-w-6xl items-center gap-12 px-5 py-12 lg:grid-cols-[1.1fr_.9fr]">
         <section className="animate-rise">
           <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary"><Sparkles className="size-3.5 animate-ai-pulse" /> Inteligência que pensa com você antes de gastar</p>
-          <h1 className="max-w-2xl text-4xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
-            Pare de gastar <span className="text-primary">mais do que precisa.</span>
+          <h1 className="text-shine animate-float max-w-2xl text-4xl font-extrabold leading-[1.1] tracking-tight md:text-6xl">
+            Pare de gastar mais do que precisa.
           </h1>
           <p className="mt-5 max-w-xl text-base leading-relaxed text-muted-foreground md:text-lg">
             O CompensAI ajuda você a planejar suas compras, montar sua lista e encontrar formas mais inteligentes de economizar — para o seu dinheiro render mais todos os meses.
