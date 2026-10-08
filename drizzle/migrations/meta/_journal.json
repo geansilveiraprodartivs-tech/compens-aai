@@ -15,6 +15,13 @@
       "when": 1791360151111,
       "tag": "0001_avatar_select",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791479712421,
+      "tag": "0002_migration",
+      "breakpoints": true
     }
   ]
 }

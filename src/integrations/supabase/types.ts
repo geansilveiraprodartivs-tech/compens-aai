@@ -279,6 +279,33 @@ export type Database = {
           },
         ]
       }
+      purchase_payments: {
+        Row: {
+          created_at: string
+          id: string
+          method: string
+          paid_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          method?: string
+          paid_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          method?: string
+          paid_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       savings_records: {
         Row: {
           created_at: string

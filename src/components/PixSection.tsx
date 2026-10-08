@@ -11,7 +11,7 @@ export function PixSection() {
         <div className="relative grid items-center gap-10 md:grid-cols-[1.2fr_.8fr]">
           <div className="animate-rise">
             <span className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-1 text-xs font-extrabold text-primary-foreground animate-ai-pulse">🚀 Em breve!</span>
-            <p className="mt-5 flex items-center gap-2 text-sm font-semibold text-primary"><Zap className="size-4" /> Pagamento via Pix</p>
+            <p className="mt-5 flex items-center gap-2 text-sm font-semibold text-primary"><Zap className="size-4" /> Pagar compra · Pix</p>
             <h2 className="mt-2 text-3xl font-extrabold leading-tight md:text-4xl">Pague suas compras pelo CompensAI</h2>
             <p className="mt-4 max-w-lg text-muted-foreground">Em breve, você poderá pagar suas compras de forma rápida e prática usando Pix e QR Code diretamente pelo CompensAI.</p>
             <Button asChild size="lg" className="mt-7 h-auto w-full whitespace-normal py-3 font-bold glow sm:w-auto">
