@@ -52,6 +52,9 @@ function PerfilPage() {
         <User className="size-5 text-accent" /> Perfil
       </h1>
 
+      <AvatarEditor path={profile?.avatar_url ?? null} userId={profile?.id} onSaved={(p) => update.mutateAsync({ avatar_url: p })} />
+
+
       <section className="glass p-4">
         <p className="text-xs text-muted-foreground">📍 Minha localização</p>
         <p className="font-semibold">{profile?.location_label ?? "Não definida"}</p>
