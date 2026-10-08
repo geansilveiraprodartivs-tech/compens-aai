@@ -9,7 +9,7 @@ const NAV = [
   { to: "/lista", label: "Lista", icon: ShoppingCart },
   { to: "/comparar", label: "Comparar", icon: Scale },
   { to: "/economia", label: "Economia", icon: PiggyBank },
-  { to: "/pix", label: "Pagar compra", icon: QrCode },
+  { to: "/pix", label: "Pagar", icon: QrCode },
   { to: "/perfil", label: "Perfil", icon: User },
 ] as const;
 
@@ -64,10 +64,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 to={to}
                 activeProps={{ className: "text-foreground" }}
                 inactiveProps={{ className: "text-muted-foreground" }}
-                className="flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] transition-colors"
+                className="flex min-w-0 items-center justify-center rounded-xl py-1.5 text-[11px] transition-colors"
               >
                 {({ isActive }) => (
-                  <>
+                  <span className="flex min-w-0 flex-col items-center justify-center gap-1 whitespace-nowrap text-center leading-none">
                     <span
                       className={
                         isActive
@@ -75,10 +75,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                           : "rounded-lg p-2"
                       }
                     >
-                      <Icon className="size-4" />
+                      <Icon className="size-4 shrink-0" />
                     </span>
-                    {label}
-                  </>
+                    <span>{label}</span>
+                  </span>
                 )}
               </Link>
             </li>

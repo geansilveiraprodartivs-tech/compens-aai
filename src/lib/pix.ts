@@ -1,35 +1,8 @@
 export type DevicePlatform = "android" | "ios" | "other";
 
-export type BankApp = {
-  id: string;
-  name: string;
-  url: string;
-};
-
-/**
- * Apps de banco compatíveis com PIX. URLs oficiais dos bancos (públicas e reais).
- * Ao abrir, o Android (App Links) e o iOS (Universal Links) encaminham direto para
- * o aplicativo quando instalado; caso contrário, abrem o site oficial do banco.
- *
- * LIMITAÇÃO TÉCNICA (honesta): o navegador não consegue listar os apps instalados
- * no aparelho nem leva sozinho à tela de PIX do banco. Isso só é possível com uma
- * cobrança PIX gerada por um provedor de pagamento (que fornece um deep link real
- * da transação). Enquanto não existir essa integração, o pagamento é feito pelo
- * usuário dentro do app do banco e a quitação é confirmada manualmente.
- */
-export const BANK_APPS: BankApp[] = [
-  { id: "nubank", name: "Nubank", url: "https://nubank.com.br" },
-  { id: "inter", name: "Banco Inter", url: "https://www.bancointer.com.br" },
-  { id: "picpay", name: "PicPay", url: "https://picpay.com.br" },
-  { id: "caixa-tem", name: "Caixa Tem", url: "https://caixatem.caixa.gov.br" },
-  { id: "itau", name: "Itaú", url: "https://www.itau.com.br" },
-  { id: "bb", name: "Banco do Brasil", url: "https://www.bb.com.br" },
-  { id: "bradesco", name: "Bradesco", url: "https://banco.bradesco" },
-  { id: "santander", name: "Santander", url: "https://www.santander.com.br" },
-  { id: "pagbank", name: "PagBank", url: "https://pagbank.com.br" },
-  { id: "c6", name: "C6 Bank", url: "https://www.c6bank.com.br" },
-  { id: "mercadopago", name: "Mercado Pago", url: "https://www.mercadopago.com.br" },
-];
+export type PickerOutcome =
+  | { opened: true; via?: string }
+  | { opened: false; reason: "browser" | "no-valid-pix-destination" };
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -42,26 +15,51 @@ export function getPlatform(): DevicePlatform {
   return "other";
 }
 
-export function platformHint(platform: DevicePlatform = getPlatform()): string {
-  if (platform === "android")
-    return "No Android, o app do banco abre direto pelo link (App Links). Se não abrir, o app não está instalado — instale o app do seu banco e pague por lá.";
-  if (platform === "ios")
-    return "No iPhone, o app do banco abre pelo recurso de Universal Links do iOS. Se não abrir, o app não está instalado — instale o app do seu banco e pague por lá.";
-  return "Abra o app do seu banco no celular e faça o pagamento PIX por lá.";
+/**
+ * Detecta se a aplicação está rodando dentro de um contêiner NATIVO
+ * (ex.: Capacitor/Cordova), que expõe ponte para recursos do dispositivo.
+ * O CompensAI hoje é um web app (Lovable), então retorna false no navegador.
+ */
+export function isNativeContainer(): boolean {
+  if (typeof window === "undefined") return false;
+  const w = window as Window & {
+    Capacitor?: { isNativePlatform?: boolean; Plugins?: unknown };
+    plugins?: unknown;
+    Android?: unknown;
+    webkit?: { messageHandlers?: Record<string, unknown> };
+  };
+  if (w.Capacitor?.isNativePlatform ?? w.Capacitor) return true;
+  if (w.plugins || w.Android || w.webkit?.messageHandlers) return true;
+  return false;
 }
 
-/** Abre o app do banco via deep link real (https App Links / Universal Links), em nova aba. */
-export function openBankApp(bank: BankApp): boolean {
-  try {
-    const link = document.createElement("a");
-    link.href = bank.url;
-    link.rel = "noopener noreferrer";
-    link.target = "_blank";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    return true;
-  } catch {
-    return false;
+/**
+ * Tenta acionar o seletor NATIVO de aplicativos bancários compatíveis com PIX.
+ *
+ * LIMITAÇÃO TÉCNICA REAL (sem simulação):
+ *  - Nenhum web app consegue abrir o seletor de apps do Android/iOS. Não existe API web
+ *    (`navigator.*`, intent ou single tab) que liste ou abra os apps instalados. As únicas
+ *    opções web são o compartilhamento genérico (proibido) e links com scheme inventado
+ *    (proibido também).
+ *  - O PIX não define uma ACTION + intent padrão que qualquer banco aceite. Cada banco
+ *    usa integração própria, dependente de um PROVEDOR DE PAGAMENTO que forneça a
+ *    cobrança (destino) válida. Sem esse destino, não há ação válida a acionar.
+ *
+ * Quando o CompensAI passar a rodar em contêiner nativo (Capacitor), este ponto receberia
+ * a chamada ao plugin/ponte que revela o seletor do próprio dispositivo. Por hoje,
+ * `isNativeContainer()` é false e o resultado é sempre `{ opened: false, reason: "browser" }`.
+ */
+export function openPixPicker(): PickerOutcome {
+  if (isNativeContainer()) {
+    return { opened: false, reason: "no-valid-pix-destination" };
   }
+  return { opened: false, reason: "browser" };
+}
+
+export function platformHint(platform: DevicePlatform = getPlatform()): string {
+  if (platform === "android")
+    return "No Android, uma página web não consegue abrir o seletor nativo de apps de PIX — isso exige um app nativo (ex.: Capacitor) e um destino de cobrança de um provedor de pagamento.";
+  if (platform === "ios")
+    return "No iPhone, o Safari não expõe a websites um seletor de apps de PIX. Para abrir o app do banco nativamente, é preciso o app nativo (Universal Links) com destino de cobrança real.";
+  return "No navegador de desktop, abra o app do seu banco no celular e faça o PIX por lá.";
 }

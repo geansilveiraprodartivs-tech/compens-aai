@@ -3,17 +3,21 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   CheckCircle2,
-  ChevronRight,
-  Landmark,
   RotateCcw,
   ShieldCheck,
+  Smartphone,
   Wallet,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { BANK_APPS, openBankApp, platformHint, type BankApp } from "@/lib/pix";
+import {
+  getPlatform,
+  openPixPicker,
+  platformHint,
+  type PickerOutcome,
+} from "@/lib/pix";
 
 export const Route = createFileRoute("/_authenticated/pix")({
   head: () => ({
@@ -44,10 +48,9 @@ function Group({ children }: { children: React.ReactNode }) {
 
 function PagarCompra() {
   const qc = useQueryClient();
-  const [step, setStep] = useState<"start" | "choose" | "ask">("start");
+  const [step, setStep] = useState<"start" | "info" | "ask">("start");
   const [current, setCurrent] = useState<string | null>(null);
-  const [openedBank, setOpenedBank] = useState(false);
-  const [lastBank, setLastBank] = useState<BankApp | null>(null);
+  const [outcome, setOutcome] = useState<PickerOutcome>({ opened: false, reason: "browser" });
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -61,21 +64,8 @@ function PagarCompra() {
     },
   });
 
-  // Ao voltar do app do banco, perguntar se o pagamento foi feito.
-  useEffect(() => {
-    if (!current || !openedBank) return;
-    const onVis = () => {
-      if (document.visibilityState === "visible") {
-        setOpenedBank(false);
-        setStep("ask");
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [current, openedBank]);
-
-  async function startPayment(bank: BankApp, retryId?: string) {
-    let id = retryId ?? current;
+  async function startPay(retryId?: string) {
+    let id = retryId ?? null;
     if (!id) {
       const { data: u } = await supabase.auth.getUser();
       const { data, error } = await supabase
@@ -91,15 +81,14 @@ function PagarCompra() {
       qc.invalidateQueries({ queryKey: ["payments"] });
     }
     setCurrent(id);
-    setLastBank(bank);
-    if (openBankApp(bank)) setOpenedBank(true);
+    setOutcome(openPixPicker());
+    setStep("info");
   }
 
   function retryPayment(p: Payment) {
     setCurrent(p.id);
-    setLastBank(null);
-    setOpenedBank(false);
-    setStep("choose");
+    setOutcome(openPixPicker());
+    setStep("info");
   }
 
   async function answer(paid: boolean) {
@@ -113,11 +102,10 @@ function PagarCompra() {
       paid ? "Compra marcada como paga (confirmação manual)." : "Compra mantida como não paga.",
     );
     setCurrent(null);
-    setLastBank(null);
-    setOpenedBank(false);
     setStep("start");
   }
 
+  const platform = getPlatform();
   const paid = payments.filter((p) => p.status === "paid");
   const pending = payments.filter((p) => p.status !== "paid");
   const fmt = (d: string) => new Date(d).toLocaleString("pt-BR");
@@ -135,7 +123,7 @@ function PagarCompra() {
               Você paga a compra direto no app do seu banco, via PIX. O valor é definido no caixa —
               o CompensAI não mostra, calcula nem envia valores.
             </p>
-            <Button className="h-12 w-full" size="lg" onClick={() => setStep("choose")}>
+            <Button className="h-12 w-full" size="lg" onClick={() => startPay()}>
               <Group>
                 <Wallet className="size-4 shrink-0" />
                 <span>Pagar compra</span>
@@ -144,38 +132,51 @@ function PagarCompra() {
           </>
         )}
 
-        {step === "choose" && (
+        {step === "info" && (
           <>
-            <p className="text-sm font-semibold">Escolha o app do seu banco</p>
-            <div className="grid gap-2">
-              {BANK_APPS.map((b) => (
-                <Button key={b.id} variant="outline" className="w-full" onClick={() => startPayment(b)}>
-                  <Group>
-                    <Landmark className="size-4 shrink-0" />
-                    <span>{b.name}</span>
-                    <ChevronRight className="size-4 shrink-0" />
-                  </Group>
-                </Button>
-              ))}
-            </div>
+            <p className="flex items-center gap-2 text-sm font-semibold">
+              <Smartphone className="size-4 text-primary" /> Pagar pelo app do seu banco
+            </p>
+            {outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
+              <p className="text-sm text-muted-foreground">
+                Contêiner nativo detectado, mas o PIX não tem um provedor de pagamento que
+                forneça ação e destino válidos do banco para abrir o app correto.
+              </p>
+            ) : platform === "android" ? (
+              <p className="text-sm text-muted-foreground">
+                Você está no navegador do Android. O Android não disponibiliza a páginas web um
+                seletor nativo de aplicativos de PIX — só aplicativos nativos têm acesso a essa
+                escolha. Para habilitá-la, o CompensAI precisa rodar como aplicativo nativo (ex.:
+                empacotado com Capacitor) e/ou usar um provedor de pagamento que forneça o destino
+                do banco.
+              </p>
+            ) : platform === "ios" ? (
+              <p className="text-sm text-muted-foreground">
+                Você está no navegador do iPhone/Safari. O iOS não expõe a páginas web um seletor
+                de apps de PIX. Para abrir o app do banco de forma nativa, o CompensAI precisa
+                rodar como aplicativo nativo (Universal Links) com um destino de cobrança real de
+                um provedor de pagamento.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No navegador de desktop não há seletor de apps. Abra o app do seu banco no celular
+                e faça o PIX por lá — depois volte para registrar aqui.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">{platformHint()}</p>
 
-            {current && (
-              <Button className="w-full" onClick={() => setStep("ask")}>
-                <Group>
-                  <CheckCircle2 className="size-4 shrink-0" />
-                  <span>Já fiz o pagamento</span>
-                </Group>
-              </Button>
-            )}
+            <Button className="w-full" onClick={() => setStep("ask")}>
+              <Group>
+                <CheckCircle2 className="size-4 shrink-0" />
+                <span>Já fiz o pagamento</span>
+              </Group>
+            </Button>
 
             <Button
               variant="ghost"
               className="w-full"
               onClick={() => {
                 setCurrent(null);
-                setLastBank(null);
-                setOpenedBank(false);
                 setStep("start");
               }}
             >
@@ -209,12 +210,6 @@ function PagarCompra() {
           <ShieldCheck className="size-3.5 shrink-0 text-primary" />
           Nunca pedimos senhas, logins ou dados bancários.
         </p>
-        {lastBank && step === "choose" && (
-          <p className="text-xs text-muted-foreground">
-            Tentamos abrir {lastBank.name}. Se o app não abriu, ele não está instalado neste
-            aparelho — instale o app do banco e faça o pagamento PIX por lá.
-          </p>
-        )}
       </section>
 
       {pending.length > 0 && (
