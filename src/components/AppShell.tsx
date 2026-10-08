@@ -9,7 +9,7 @@ const NAV = [
   { to: "/lista", label: "Lista", icon: ShoppingCart },
   { to: "/comparar", label: "Comparar", icon: Scale },
   { to: "/economia", label: "Economia", icon: PiggyBank },
-  { to: "/pix", label: "Pix", icon: QrCode },
+  { to: "/pix", label: "Pagar compra", icon: QrCode },
   { to: "/perfil", label: "Perfil", icon: User },
 ] as const;
 
