@@ -2,7 +2,22 @@ export type DevicePlatform = "android" | "ios" | "other";
 
 export type PickerOutcome =
   | { opened: true; via?: string }
-  | { opened: false; reason: "browser" | "no-valid-pix-destination" };
+  | {
+      opened: false;
+      reason: "browser" | "no-valid-pix-destination" | "native-available";
+    };
+
+export interface InstalledBank {
+  id: string;
+  name: string;
+  label: string;
+  icon: string;
+}
+
+type BankAppsApi = {
+  getInstalledBanks: () => Promise<{ banks: InstalledBank[] }>;
+  openBank: (opts: { id: string }) => Promise<{ opened: boolean; error?: string }>;
+};
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -45,15 +60,62 @@ export function isNativeContainer(): boolean {
  *    usa integração própria, dependente de um PROVEDOR DE PAGAMENTO que forneça a
  *    cobrança (destino) válida. Sem esse destino, não há ação válida a acionar.
  *
- * Quando o CompensAI passar a rodar em contêiner nativo (Capacitor), este ponto receberia
- * a chamada ao plugin/ponte que revela o seletor do próprio dispositivo. Por hoje,
- * `isNativeContainer()` é false e o resultado é sempre `{ opened: false, reason: "browser" }`.
+ * No app nativo (empacotado com Capacitor), o plugin local `BankApps` lista os apps
+ * bancários instalados e abre o banco escolhido — aqui sinalizamos `native-available`
+ * para o frontend exibir esse fluxo. No web, o resultado é sempre `{ opened: false, ... }`.
  */
 export function openPixPicker(): PickerOutcome {
   if (isNativeContainer()) {
-    return { opened: false, reason: "no-valid-pix-destination" };
+    return { opened: false, reason: "native-available" };
   }
   return { opened: false, reason: "browser" };
+}
+
+/**
+ * Acesso ao plugin nativo `BankApps` (Capacitor). Só é carregado dinamicamente dentro
+ * de um contêiner nativo — no navegador comum `@capacitor/core` nunca é importado o
+ * the runtime, mantendo o web puro e honesto.
+ */
+let bankAppsCache: BankAppsApi | null | undefined;
+
+async function loadBankApps(): Promise<BankAppsApi | null> {
+  if (!isNativeContainer()) return null;
+  if (bankAppsCache !== undefined) return bankAppsCache;
+  try {
+    const core = await import("@capacitor/core");
+    bankAppsCache = core.registerPlugin<BankAppsApi>("BankApps");
+  } catch {
+    bankAppsCache = null;
+  }
+  return bankAppsCache;
+}
+
+/** Lista apps bancários instalados no dispositivo (só em contêiner nativo). */
+export async function getInstalledBanks(): Promise<InstalledBank[]> {
+  const plugin = await loadBankApps();
+  if (!plugin) return [];
+  try {
+    const res = await plugin.getInstalledBanks();
+    return Array.isArray(res?.banks) ? res.banks : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Abre o app do banco escolhido (só em contêiner nativo; web retorna não-nativo). */
+export async function openInstalledBank(
+  id: string,
+): Promise<{ opened: boolean; error?: string }> {
+  const plugin = await loadBankApps();
+  if (!plugin) return { opened: false, error: "not-native" };
+  try {
+    return await plugin.openBank({ id });
+  } catch (err) {
+    return {
+      opened: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export function platformHint(platform: DevicePlatform = getPlatform()): string {

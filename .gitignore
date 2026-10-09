@@ -25,6 +25,27 @@ android/
 ios/
 capacitor-cache/
 
+# Plugin nativo "BankApps" (mantido versionado para build local do APK)
+!android/
+android/*
+!android/app
+android/app/*
+!android/app/src
+android/app/src/*
+!android/app/src/main
+android/app/src/main/*
+!android/app/src/main/AndroidManifest.xml
+!android/app/src/main/java
+android/app/src/main/java/*
+!android/app/src/main/java/br
+android/app/src/main/java/br/*
+!android/app/src/main/java/br/com
+android/app/src/main/java/br/com/*
+!android/app/src/main/java/br/com/compensai
+android/app/src/main/java/br/com/compensai/*
+!android/app/src/main/java/br/com/compensai/BankAppsPlugin.java
+!android/app/src/main/java/br/com/compensai/MainActivity.java
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -13,9 +13,12 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
+  getInstalledBanks,
   getPlatform,
+  openInstalledBank,
   openPixPicker,
   platformHint,
+  type InstalledBank,
   type PickerOutcome,
 } from "@/lib/pix";
 
@@ -51,6 +54,10 @@ function PagarCompra() {
   const [step, setStep] = useState<"start" | "info" | "ask">("start");
   const [current, setCurrent] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<PickerOutcome>({ opened: false, reason: "browser" });
+  const [banks, setBanks] = useState<InstalledBank[] | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  const isNativeAvailable = outcome.opened === false && outcome.reason === "native-available";
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -63,6 +70,12 @@ function PagarCompra() {
       return data as Payment[];
     },
   });
+
+  async function maybeLoadBanks(o: PickerOutcome) {
+    if (o.opened === false && o.reason === "native-available") {
+      setBanks(await getInstalledBanks());
+    }
+  }
 
   async function startPay(retryId?: string) {
     let id = retryId ?? null;
@@ -81,14 +94,31 @@ function PagarCompra() {
       qc.invalidateQueries({ queryKey: ["payments"] });
     }
     setCurrent(id);
-    setOutcome(openPixPicker());
+    const o = openPixPicker();
+    setOutcome(o);
+    setBanks(null);
+    await maybeLoadBanks(o);
     setStep("info");
   }
 
   function retryPayment(p: Payment) {
     setCurrent(p.id);
-    setOutcome(openPixPicker());
+    const o = openPixPicker();
+    setOutcome(o);
+    setBanks(null);
+    void maybeLoadBanks(o);
     setStep("info");
+  }
+
+  async function openBank(id: string) {
+    setOpeningId(id);
+    const res = await openInstalledBank(id);
+    setOpeningId(null);
+    if (res.opened) {
+      toast.info("Abra o banco e faça o PIX.", { duration: 6000 });
+    } else {
+      toast.error(res.error ? `Não foi possível abrir: ${res.error}` : "Não foi possível abrir o banco.");
+    }
   }
 
   async function answer(paid: boolean) {
@@ -137,7 +167,47 @@ function PagarCompra() {
             <p className="flex items-center gap-2 text-sm font-semibold">
               <Smartphone className="size-4 text-primary" /> Pagar pelo app do seu banco
             </p>
-            {outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
+
+            {isNativeAvailable ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Escolha o app do banco instalado no seu celular. O CompensAI abre o banco e
+                  você faz o PIX por lá — depois volte para registrar.
+                </p>
+                {banks === null ? (
+                  <p className="text-xs text-muted-foreground">
+                    Verificando apps de banco instalados…
+                  </p>
+                ) : banks.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Nenhum app de banco compatível foi encontrado neste aparelho. Disponível na
+                    lista: Nubank, Itaú, Bradesco, Banco do Brasil, Caixa Tem, Caixa, Santander,
+                    Inter, PicPay, Mercado Pago e PagBank.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {banks.map((b) => (
+                      <li key={b.id}>
+                        <Button
+                          variant="outline"
+                          className="h-11 w-full justify-between"
+                          disabled={openingId !== null}
+                          onClick={() => void openBank(b.id)}
+                        >
+                          <Group>
+                            <Wallet className="size-4 shrink-0" />
+                            <span>{b.label || b.name}</span>
+                          </Group>
+                          <span className="text-xs text-muted-foreground">
+                            {openingId === b.id ? "Abrindo…" : "Abrir"}
+                          </span>
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
               <p className="text-sm text-muted-foreground">
                 Contêiner nativo detectado, mas o PIX não tem um provedor de pagamento que
                 forneça ação e destino válidos do banco para abrir o app correto.
@@ -163,7 +233,9 @@ function PagarCompra() {
                 e faça o PIX por lá — depois volte para registrar aqui.
               </p>
             )}
-            <p className="text-xs text-muted-foreground">{platformHint()}</p>
+            {!isNativeAvailable && (
+              <p className="text-xs text-muted-foreground">{platformHint()}</p>
+            )}
 
             <Button className="w-full" onClick={() => setStep("ask")}>
               <Group>
