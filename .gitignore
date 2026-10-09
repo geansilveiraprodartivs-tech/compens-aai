@@ -20,6 +20,11 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Capacitor (plataformas nativas geradas localmente)
+android/
+ios/
+capacitor-cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
