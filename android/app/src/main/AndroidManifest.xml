@@ -79,5 +79,7 @@
         <package android:name="com.paypal.android.p2pmobile" />
         <package android:name="com.transferwise.android" />
         <package android:name="com.revolut.revolut" />
+        <package android:name="br.gov.caixa.fgts.trabalhador" />
+        <package android:name="br.com.cakto" />
     </queries>
 </manifest>

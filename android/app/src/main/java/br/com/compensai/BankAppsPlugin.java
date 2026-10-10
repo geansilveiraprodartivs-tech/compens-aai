@@ -68,6 +68,8 @@ public class BankAppsPlugin extends Plugin {
             {"PayPal", "com.paypal.android.p2pmobile"},
             {"Wise", "com.transferwise.android"},
             {"Revolut", "com.revolut.revolut"},
+            {"Caixa FGTS", "br.gov.caixa.fgts.trabalhador"},
+            {"Cakto", "br.com.cakto"},
     };
 
     private void collect(JSArray out, String[][] apps) {
