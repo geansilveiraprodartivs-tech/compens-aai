@@ -11,15 +11,13 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-
 @CapacitorPlugin(name = "BankApps")
 public class BankAppsPlugin extends Plugin {
 
+    /**
+     * Bancos/carteiras "cadastrados" no CompensAI: aparecem como botões fixos quando
+     * instalados no aparelho. Mantém exatamente a lista já existente.
+     */
     static final String[][] KNOWN_BANK_APPS = {
             {"Nubank", "com.nu.production"},
             {"Itaú", "com.itau"},
@@ -34,26 +32,51 @@ public class BankAppsPlugin extends Plugin {
             {"PagBank", "br.com.uol.ps.myaccount"},
     };
 
-    static final List<String> KNOWN_PACKAGES = new ArrayList<>();
+    /**
+     * Demais bancos e carteiras digitais reconhecidos pelo CompensAI. Só entram na tela
+     * "Escolher outro app bancário" quando realmente instalados no aparelho. Package names
+     * verificados na Google Play Store.
+     */
+    static final String[][] OTHER_BANK_APPS = {
+            {"C6 Bank", "com.c6bank.app"},
+            {"Neon", "br.com.neon"},
+            {"Next", "br.com.bradesco.next"},
+            {"Sicoob", "br.com.sicoobnet"},
+            {"Sicredi", "br.com.sicredimobi.smart"},
+            {"Banco Pan", "br.com.bancopan.cartoes"},
+            {"BV", "com.votorantim.bvpd"},
+            {"BTG Pactual", "com.btg.pactual.banking"},
+            {"Banco BMG", "br.com.bancobmg.bancodigital"},
+            {"Banco Mercantil", "com.mercantil"},
+            {"Banrisul", "br.com.banrisul"},
+            {"Digio", "br.com.digio"},
+            {"Cora", "br.com.cora.bank"},
+            {"Ton (Stone)", "br.com.stone.ton"},
+            {"InfinitePay", "io.cloudwalk.infinitepaydash"},
+            {"RecargaPay", "com.recarga.recarga"},
+            {"99Pay", "com.pay99.wallet"},
+            {"Unicred", "br.com.unicredmobile"},
+            {"Banco A27", "br.com.a27bank"},
+            {"Koin", "br.com.koin"},
+            {"DM - Conta Digital", "br.com.dmcard.contadigital"},
+            {"AgiPay", "br.com.agipag.app"},
+            {"Google Wallet", "com.google.android.apps.walletnfcrel"},
+            {"Samsung Wallet", "com.samsung.android.spay"},
+            {"PayPal", "com.paypal.android.p2pmobile"},
+            {"Wise", "com.transferwise.android"},
+            {"Revolut", "com.revolut.revolut"},
+    };
 
-    static {
-        for (String[] app : KNOWN_BANK_APPS) {
-            KNOWN_PACKAGES.add(app[1]);
-        }
-    }
-
-    @PluginMethod
-    public void getInstalledBanks(PluginCall call) {
+    private void collect(JSArray out, String[][] apps) {
         PackageManager pm = getContext().getPackageManager();
-        JSArray result = new JSArray();
-        for (String[] app : KNOWN_BANK_APPS) {
+        for (String[] app : apps) {
             String id = app[1];
-            Intent intent = pm.getLaunchIntentForPackage(id);
-            if (intent == null) {
+            Intent launch = pm.getLaunchIntentForPackage(id);
+            if (launch == null) {
                 continue;
             }
             try {
-                ResolveInfo ri = pm.resolveActivity(intent, 0);
+                ResolveInfo ri = pm.resolveActivity(launch, 0);
                 JSObject entry = new JSObject();
                 entry.put("id", id);
                 entry.put("name", app[0]);
@@ -61,25 +84,46 @@ public class BankAppsPlugin extends Plugin {
                         ? ri.loadLabel(pm).toString()
                         : app[0];
                 entry.put("label", label);
-                String icon = "https://play-lh.googleusercontent.com/" + id;
-                entry.put("icon", icon);
-                result.put(entry);
+                entry.put("icon", "");
+                out.put(entry);
             } catch (Exception e) {
                 // ignore individual failures
             }
         }
+    }
+
+    /** Bancos "cadastrados" instalados no aparelho (botões fixos). */
+    @PluginMethod
+    public void getInstalledBanks(PluginCall call) {
+        JSArray result = new JSArray();
+        collect(result, KNOWN_BANK_APPS);
         JSObject ret = new JSObject();
         ret.put("banks", result);
         call.resolve(ret);
     }
 
-    private String findNameFor(String id) {
+    /** Demais bancos/carteiras instalados (opção "Escolher outro app bancário"). */
+    @PluginMethod
+    public void getOtherBankApps(PluginCall call) {
+        JSArray result = new JSArray();
+        collect(result, OTHER_BANK_APPS);
+        JSObject ret = new JSObject();
+        ret.put("banks", result);
+        call.resolve(ret);
+    }
+
+    private boolean isCatalogPackage(String id) {
         for (String[] app : KNOWN_BANK_APPS) {
             if (app[1].equals(id)) {
-                return app[0];
+                return true;
             }
         }
-        return id;
+        for (String[] app : OTHER_BANK_APPS) {
+            if (app[1].equals(id)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @PluginMethod
@@ -89,7 +133,7 @@ public class BankAppsPlugin extends Plugin {
             call.reject("Bank id is required", "INVALID_BANK_ID");
             return;
         }
-        if (!KNOWN_PACKAGES.contains(id)) {
+        if (!isCatalogPackage(id)) {
             call.reject("Unknown bank app: " + id, "UNKNOWN_BANK");
             return;
         }

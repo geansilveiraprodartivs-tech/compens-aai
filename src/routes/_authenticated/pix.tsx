@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   CheckCircle2,
+  Grid2x2,
   RotateCcw,
   ShieldCheck,
   Smartphone,
@@ -14,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   getInstalledBanks,
+  getOtherBankApps,
   getPlatform,
   openInstalledBank,
   openPixPicker,
@@ -55,6 +57,8 @@ function PagarCompra() {
   const [current, setCurrent] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<PickerOutcome>({ opened: false, reason: "browser" });
   const [banks, setBanks] = useState<InstalledBank[] | null>(null);
+  const [otherBanks, setOtherBanks] = useState<InstalledBank[] | null>(null);
+  const [showOthers, setShowOthers] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
   const isNativeAvailable = outcome.opened === false && outcome.reason === "native-available";
@@ -73,7 +77,9 @@ function PagarCompra() {
 
   async function maybeLoadBanks(o: PickerOutcome) {
     if (o.opened === false && o.reason === "native-available") {
-      setBanks(await getInstalledBanks());
+      const [known, others] = await Promise.all([getInstalledBanks(), getOtherBankApps()]);
+      setBanks(known);
+      setOtherBanks(others);
     }
   }
 
@@ -97,6 +103,8 @@ function PagarCompra() {
     const o = openPixPicker();
     setOutcome(o);
     setBanks(null);
+    setOtherBanks(null);
+    setShowOthers(false);
     await maybeLoadBanks(o);
     setStep("info");
   }
@@ -106,6 +114,8 @@ function PagarCompra() {
     const o = openPixPicker();
     setOutcome(o);
     setBanks(null);
+    setOtherBanks(null);
+    setShowOthers(false);
     void maybeLoadBanks(o);
     setStep("info");
   }
@@ -119,6 +129,14 @@ function PagarCompra() {
     } else {
       toast.error(res.error ? `Não foi possível abrir: ${res.error}` : "Não foi possível abrir o banco.");
     }
+  }
+
+  function toggleOtherBanks() {
+    if (!otherBanks || otherBanks.length === 0) {
+      toast.error("Nenhum outro app de banco ou carteira digital encontrado neste aparelho.");
+      return;
+    }
+    setShowOthers((v) => !v);
   }
 
   async function answer(paid: boolean) {
@@ -187,6 +205,42 @@ function PagarCompra() {
                 ) : (
                   <ul className="space-y-2">
                     {banks.map((b) => (
+                      <li key={b.id}>
+                        <Button
+                          variant="outline"
+                          className="h-11 w-full justify-between"
+                          disabled={openingId !== null}
+                          onClick={() => void openBank(b.id)}
+                        >
+                          <Group>
+                            <Wallet className="size-4 shrink-0" />
+                            <span>{b.label || b.name}</span>
+                          </Group>
+                          <span className="text-xs text-muted-foreground">
+                            {openingId === b.id ? "Abrindo…" : "Abrir"}
+                          </span>
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <Button
+                  variant="secondary"
+                  className="h-11 w-full justify-between"
+                  disabled={openingId !== null}
+                  onClick={() => toggleOtherBanks()}
+                >
+                  <Group>
+                    <Grid2x2 className="size-4 shrink-0" />
+                    <span>Escolher outro app bancário</span>
+                  </Group>
+                  <span className="text-xs text-muted-foreground">
+                    {showOthers ? "Ocultar" : "Abrir"}
+                  </span>
+                </Button>
+                {showOthers && otherBanks && otherBanks.length > 0 && (
+                  <ul className="space-y-2">
+                    {otherBanks.map((b) => (
                       <li key={b.id}>
                         <Button
                           variant="outline"

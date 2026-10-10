@@ -16,6 +16,7 @@ export interface InstalledBank {
 
 type BankAppsApi = {
   getInstalledBanks: () => Promise<{ banks: InstalledBank[] }>;
+  getOtherBankApps: () => Promise<{ banks: InstalledBank[] }>;
   openBank: (opts: { id: string }) => Promise<{ opened: boolean; error?: string }>;
 };
 
@@ -106,6 +107,22 @@ export async function getInstalledBanks(): Promise<InstalledBank[]> {
   if (!handle) return [];
   try {
     const res = await handle.api.getInstalledBanks();
+    return Array.isArray(res?.banks) ? res.banks : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Lista OUTROS bancos/carteiras digitais instalados (fora da lista de bancos
+ * "cadastrados" exibidos como botões fixos). Alimenta a opção
+ * "Escolher outro app bancário". Só retorna apps realmente instalados.
+ */
+export async function getOtherBankApps(): Promise<InstalledBank[]> {
+  const handle = await loadBankApps();
+  if (!handle) return [];
+  try {
+    const res = await handle.api.getOtherBankApps();
     return Array.isArray(res?.banks) ? res.banks : [];
   } catch {
     return [];
