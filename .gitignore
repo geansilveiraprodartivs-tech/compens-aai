@@ -46,6 +46,19 @@ android/app/src/main/java/br/com/compensai/*
 !android/app/src/main/java/br/com/compensai/BankAppsPlugin.java
 !android/app/src/main/java/br/com/compensai/MainActivity.java
 
+# Icone do launcher (versionado para sobreviver a rebuilds; gere com scripts/generate-android-icons.ps1)
+!android/app/src/main/res
+android/app/src/main/res/*
+!android/app/src/main/res/mipmap-mdpi
+!android/app/src/main/res/mipmap-hdpi
+!android/app/src/main/res/mipmap-xhdpi
+!android/app/src/main/res/mipmap-xxhdpi
+!android/app/src/main/res/mipmap-xxxhdpi
+!android/app/src/main/res/mipmap-anydpi-v26
+!android/app/src/main/res/values
+android/app/src/main/res/values/*
+!android/app/src/main/res/values/ic_launcher_background.xml
+
 # Plugin nativo "BankApps" no iOS (mantido versionado para build no Mac/Xcode).
 # O restante do projeto ios/ e regenerado por `npx cap add ios`.
 !ios/
