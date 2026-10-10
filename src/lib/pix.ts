@@ -130,9 +130,7 @@ export async function getOtherBankApps(): Promise<InstalledBank[]> {
 }
 
 /** Abre o app do banco escolhido (só em contêiner nativo; web retorna não-nativo). */
-export async function openInstalledBank(
-  id: string,
-): Promise<{ opened: boolean; error?: string }> {
+export async function openInstalledBank(id: string): Promise<{ opened: boolean; error?: string }> {
   const handle = await loadBankApps();
   if (!handle) return { opened: false, error: "not-native" };
   try {

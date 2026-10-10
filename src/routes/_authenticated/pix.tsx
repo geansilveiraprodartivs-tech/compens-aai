@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Smartphone,
   Wallet,
+  X,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +45,19 @@ export const Route = createFileRoute("/_authenticated/pix")({
 
 type Payment = { id: string; status: string; created_at: string; paid_at: string | null };
 
+/** Bancos que o usuário removeu da lista pré-definida (persistido no aparelho). */
+const HIDDEN_BANKS_KEY = "compensai.hiddenBanks.v1";
+
+function loadHiddenBanks(): string[] {
+  try {
+    const raw = localStorage.getItem(HIDDEN_BANKS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Ícone + texto como um único grupo centralizado (ícone e legenda na mesma linha). */
 function Group({ children }: { children: React.ReactNode }) {
   return (
@@ -60,6 +74,11 @@ function PagarCompra() {
   const [otherBanks, setOtherBanks] = useState<InstalledBank[] | null>(null);
   const [showOthers, setShowOthers] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<string[]>([]);
+
+  useEffect(() => {
+    setHidden(loadHiddenBanks());
+  }, []);
 
   const isNativeAvailable = outcome.opened === false && outcome.reason === "native-available";
 
@@ -74,6 +93,11 @@ function PagarCompra() {
       return data as Payment[];
     },
   });
+
+  /** Lista pré-definida sem os bancos que o usuário removeu. */
+  const visibleBanks = (banks ?? []).filter((b) => !hidden.includes(b.id));
+  /** Todos os apps de banco/carteira instalados no aparelho (pré-definidos + demais). */
+  const deviceBanks = banks && otherBanks ? [...banks, ...otherBanks] : null;
 
   async function maybeLoadBanks(o: PickerOutcome) {
     if (o.opened === false && o.reason === "native-available") {
@@ -127,13 +151,35 @@ function PagarCompra() {
     if (res.opened) {
       toast.info("Abra o banco e faça o PIX.", { duration: 6000 });
     } else {
-      toast.error(res.error ? `Não foi possível abrir: ${res.error}` : "Não foi possível abrir o banco.");
+      toast.error(
+        res.error ? `Não foi possível abrir: ${res.error}` : "Não foi possível abrir o banco.",
+      );
     }
   }
 
+  function persistHidden(next: string[]) {
+    setHidden(next);
+    try {
+      localStorage.setItem(HIDDEN_BANKS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Remove um banco da lista pré-definida (só da sua lista; reversível). */
+  function hideBank(id: string) {
+    persistHidden(Array.from(new Set([...hidden, id])));
+    toast.info("Banco removido da sua lista.");
+  }
+
+  function restoreBanks() {
+    persistHidden([]);
+    toast.success("Bancos removidos foram restaurados.");
+  }
+
   function toggleOtherBanks() {
-    if (!otherBanks || otherBanks.length === 0) {
-      toast.error("Nenhum outro app de banco ou carteira digital encontrado neste aparelho.");
+    if (!deviceBanks || deviceBanks.length === 0) {
+      toast.error("Nenhum app de banco ou carteira digital encontrado neste aparelho.");
       return;
     }
     setShowOthers((v) => !v);
@@ -189,26 +235,26 @@ function PagarCompra() {
             {isNativeAvailable ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Escolha o app do banco instalado no seu celular. O CompensAI abre o banco e
-                  você faz o PIX por lá — depois volte para registrar.
+                  Escolha o app do banco instalado no seu celular. O CompensAI abre o banco e você
+                  faz o PIX por lá — depois volte para registrar.
                 </p>
                 {banks === null ? (
                   <p className="text-xs text-muted-foreground">
                     Verificando apps de banco instalados…
                   </p>
-                ) : banks.length === 0 ? (
+                ) : visibleBanks.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    Nenhum app de banco compatível foi encontrado neste aparelho. Disponível na
-                    lista: Nubank, Itaú, Bradesco, Banco do Brasil, Caixa Tem, Caixa, Santander,
-                    Inter, PicPay, Mercado Pago e PagBank.
+                    {hidden.length > 0
+                      ? "Você removeu todos os bancos da sua lista. Use “Restaurar” abaixo ou veja os apps no dispositivo."
+                      : "Nenhum app de banco compatível foi encontrado neste aparelho. Use o botão abaixo para ver os apps instalados."}
                   </p>
                 ) : (
                   <ul className="space-y-2">
-                    {banks.map((b) => (
-                      <li key={b.id}>
+                    {visibleBanks.map((b) => (
+                      <li key={b.id} className="flex items-center gap-2">
                         <Button
                           variant="outline"
-                          className="h-11 w-full justify-between"
+                          className="h-11 flex-1 justify-between"
                           disabled={openingId !== null}
                           onClick={() => void openBank(b.id)}
                         >
@@ -220,9 +266,33 @@ function PagarCompra() {
                             {openingId === b.id ? "Abrindo…" : "Abrir"}
                           </span>
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive"
+                          disabled={openingId !== null}
+                          onClick={() => hideBank(b.id)}
+                          aria-label={`Remover ${b.label || b.name} da lista`}
+                          title="Remover da minha lista"
+                        >
+                          <X className="size-4" />
+                        </Button>
                       </li>
                     ))}
                   </ul>
+                )}
+                {hidden.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-muted-foreground"
+                    onClick={() => restoreBanks()}
+                  >
+                    <Group>
+                      <RotateCcw className="size-3.5 shrink-0" />
+                      <span>Restaurar bancos removidos ({hidden.length})</span>
+                    </Group>
+                  </Button>
                 )}
                 <Button
                   variant="secondary"
@@ -232,15 +302,15 @@ function PagarCompra() {
                 >
                   <Group>
                     <Grid2x2 className="size-4 shrink-0" />
-                    <span>Escolher outro app bancário</span>
+                    <span>Ver apps de banco no meu dispositivo</span>
                   </Group>
                   <span className="text-xs text-muted-foreground">
                     {showOthers ? "Ocultar" : "Abrir"}
                   </span>
                 </Button>
-                {showOthers && otherBanks && otherBanks.length > 0 && (
+                {showOthers && deviceBanks && deviceBanks.length > 0 && (
                   <ul className="space-y-2">
-                    {otherBanks.map((b) => (
+                    {deviceBanks.map((b) => (
                       <li key={b.id}>
                         <Button
                           variant="outline"
@@ -263,8 +333,8 @@ function PagarCompra() {
               </>
             ) : outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
               <p className="text-sm text-muted-foreground">
-                Contêiner nativo detectado, mas o PIX não tem um provedor de pagamento que
-                forneça ação e destino válidos do banco para abrir o app correto.
+                Contêiner nativo detectado, mas o PIX não tem um provedor de pagamento que forneça
+                ação e destino válidos do banco para abrir o app correto.
               </p>
             ) : platform === "android" ? (
               <p className="text-sm text-muted-foreground">
@@ -276,15 +346,15 @@ function PagarCompra() {
               </p>
             ) : platform === "ios" ? (
               <p className="text-sm text-muted-foreground">
-                Você está no navegador do iPhone/Safari. O iOS não expõe a páginas web um seletor
-                de apps de PIX. Para abrir o app do banco de forma nativa, o CompensAI precisa
-                rodar como aplicativo nativo (Universal Links) com um destino de cobrança real de
-                um provedor de pagamento.
+                Você está no navegador do iPhone/Safari. O iOS não expõe a páginas web um seletor de
+                apps de PIX. Para abrir o app do banco de forma nativa, o CompensAI precisa rodar
+                como aplicativo nativo (Universal Links) com um destino de cobrança real de um
+                provedor de pagamento.
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No navegador de desktop não há seletor de apps. Abra o app do seu banco no celular
-                e faça o PIX por lá — depois volte para registrar aqui.
+                No navegador de desktop não há seletor de apps. Abra o app do seu banco no celular e
+                faça o PIX por lá — depois volte para registrar aqui.
               </p>
             )}
             {!isNativeAvailable && (
