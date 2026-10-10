@@ -4,6 +4,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -148,6 +151,51 @@ public class BankAppsPlugin extends Plugin {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(intent);
             ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            ret.put("opened", false);
+            ret.put("error", e.getMessage());
+            call.resolve(ret);
+        }
+    }
+
+    private void addChooserTargets(PackageManager pm, List<Intent> out, String[][] apps) {
+        for (String[] app : apps) {
+            Intent launch = pm.getLaunchIntentForPackage(app[1]);
+            if (launch == null) {
+                continue;
+            }
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            out.add(launch);
+        }
+    }
+
+    /**
+     * Abre o seletor NATIVO do Android ("Abrir com") contendo apenas os apps de banco/carteira
+     * instalados no aparelho. O usuário escolhe ali e o banco é aberto pelo próprio sistema.
+     */
+    @PluginMethod
+    public void openBankChooser(PluginCall call) {
+        PackageManager pm = getContext().getPackageManager();
+        List<Intent> targets = new ArrayList<>();
+        addChooserTargets(pm, targets, KNOWN_BANK_APPS);
+        addChooserTargets(pm, targets, OTHER_BANK_APPS);
+        if (targets.isEmpty()) {
+            call.reject("No bank apps installed", "NO_BANK_APPS");
+            return;
+        }
+        Intent base = targets.get(0);
+        Intent chooser = Intent.createChooser(base, "Escolha o app do banco");
+        if (targets.size() > 1) {
+            List<Intent> rest = new ArrayList<>(targets.subList(1, targets.size()));
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, rest.toArray(new Intent[0]));
+        }
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        JSObject ret = new JSObject();
+        try {
+            getContext().startActivity(chooser);
+            ret.put("opened", true);
+            ret.put("count", targets.size());
             call.resolve(ret);
         } catch (Exception e) {
             ret.put("opened", false);

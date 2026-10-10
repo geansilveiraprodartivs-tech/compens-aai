@@ -18,7 +18,10 @@ type BankAppsApi = {
   getInstalledBanks: () => Promise<{ banks: InstalledBank[] }>;
   getOtherBankApps: () => Promise<{ banks: InstalledBank[] }>;
   openBank: (opts: { id: string }) => Promise<{ opened: boolean; error?: string }>;
+  openBankChooser: () => Promise<{ opened: boolean; count?: number; error?: string }>;
 };
+
+export type ChooserResult = { opened: boolean; count?: number; error?: string };
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -135,6 +138,23 @@ export async function openInstalledBank(id: string): Promise<{ opened: boolean; 
   if (!handle) return { opened: false, error: "not-native" };
   try {
     return await handle.api.openBank({ id });
+  } catch (err) {
+    return {
+      opened: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Abre o seletor NATIVO de apps de banco do aparelho (só em contêiner nativo).
+ * O próprio Android mostra os apps de banco instalados e o usuário escolhe ali.
+ */
+export async function openBankChooser(): Promise<ChooserResult> {
+  const handle = await loadBankApps();
+  if (!handle) return { opened: false, error: "not-native" };
+  try {
+    return await handle.api.openBankChooser();
   } catch (err) {
     return {
       opened: false,

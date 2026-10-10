@@ -52,5 +52,32 @@
         <package android:name="com.picpay" />
         <package android:name="com.mercadopago.wallet" />
         <package android:name="br.com.uol.ps.myaccount" />
+        <package android:name="com.c6bank.app" />
+        <package android:name="br.com.neon" />
+        <package android:name="br.com.bradesco.next" />
+        <package android:name="br.com.sicoobnet" />
+        <package android:name="br.com.sicredimobi.smart" />
+        <package android:name="br.com.bancopan.cartoes" />
+        <package android:name="com.votorantim.bvpd" />
+        <package android:name="com.btg.pactual.banking" />
+        <package android:name="br.com.bancobmg.bancodigital" />
+        <package android:name="com.mercantil" />
+        <package android:name="br.com.banrisul" />
+        <package android:name="br.com.digio" />
+        <package android:name="br.com.cora.bank" />
+        <package android:name="br.com.stone.ton" />
+        <package android:name="io.cloudwalk.infinitepaydash" />
+        <package android:name="com.recarga.recarga" />
+        <package android:name="com.pay99.wallet" />
+        <package android:name="br.com.unicredmobile" />
+        <package android:name="br.com.a27bank" />
+        <package android:name="br.com.koin" />
+        <package android:name="br.com.dmcard.contadigital" />
+        <package android:name="br.com.agipag.app" />
+        <package android:name="com.google.android.apps.walletnfcrel" />
+        <package android:name="com.samsung.android.spay" />
+        <package android:name="com.paypal.android.p2pmobile" />
+        <package android:name="com.transferwise.android" />
+        <package android:name="com.revolut.revolut" />
     </queries>
 </manifest>
