@@ -101,6 +101,7 @@ public class BankAppsPlugin extends Plugin {
         }
         JSObject ret = new JSObject();
         try {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(intent);
             ret.put("opened", true);
             call.resolve(ret);

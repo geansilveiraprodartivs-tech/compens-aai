@@ -76,14 +76,24 @@ export function openPixPicker(): PickerOutcome {
  * de um contêiner nativo — no navegador comum `@capacitor/core` nunca é importado o
  * the runtime, mantendo o web puro e honesto.
  */
-let bankAppsCache: BankAppsApi | null | undefined;
+/**
+ * O plugin devolvido por `registerPlugin` é um Proxy que responde a QUALQUER
+ * propriedade — inclusive `then`. Se esse proxy for devolvido diretamente de uma
+ * função `async`, o motor JS o trata como "thenable" e chama `plugin.then(...)`,
+ * que não existe no nativo (`"BankApps.then()" is not implemented on android`),
+ * quebrando o fluxo. Por isso guardamos/devolvemos o plugin dentro de um objeto
+ * simples (não-thenable).
+ */
+type BankAppsHandle = { api: BankAppsApi };
 
-async function loadBankApps(): Promise<BankAppsApi | null> {
+let bankAppsCache: BankAppsHandle | null | undefined;
+
+async function loadBankApps(): Promise<BankAppsHandle | null> {
   if (!isNativeContainer()) return null;
   if (bankAppsCache !== undefined) return bankAppsCache;
   try {
     const core = await import("@capacitor/core");
-    bankAppsCache = core.registerPlugin<BankAppsApi>("BankApps");
+    bankAppsCache = { api: core.registerPlugin<BankAppsApi>("BankApps") };
   } catch {
     bankAppsCache = null;
   }
@@ -92,10 +102,10 @@ async function loadBankApps(): Promise<BankAppsApi | null> {
 
 /** Lista apps bancários instalados no dispositivo (só em contêiner nativo). */
 export async function getInstalledBanks(): Promise<InstalledBank[]> {
-  const plugin = await loadBankApps();
-  if (!plugin) return [];
+  const handle = await loadBankApps();
+  if (!handle) return [];
   try {
-    const res = await plugin.getInstalledBanks();
+    const res = await handle.api.getInstalledBanks();
     return Array.isArray(res?.banks) ? res.banks : [];
   } catch {
     return [];
@@ -106,10 +116,10 @@ export async function getInstalledBanks(): Promise<InstalledBank[]> {
 export async function openInstalledBank(
   id: string,
 ): Promise<{ opened: boolean; error?: string }> {
-  const plugin = await loadBankApps();
-  if (!plugin) return { opened: false, error: "not-native" };
+  const handle = await loadBankApps();
+  if (!handle) return { opened: false, error: "not-native" };
   try {
-    return await plugin.openBank({ id });
+    return await handle.api.openBank({ id });
   } catch (err) {
     return {
       opened: false,
