@@ -16,12 +16,8 @@ export interface InstalledBank {
 
 type BankAppsApi = {
   getInstalledBanks: () => Promise<{ banks: InstalledBank[] }>;
-  getOtherBankApps: () => Promise<{ banks: InstalledBank[] }>;
   openBank: (opts: { id: string }) => Promise<{ opened: boolean; error?: string }>;
-  openBankChooser: () => Promise<{ opened: boolean; count?: number; error?: string }>;
 };
-
-export type ChooserResult = { opened: boolean; count?: number; error?: string };
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -53,7 +49,7 @@ export function isNativeContainer(): boolean {
 }
 
 /**
- * Tenta acionar o seletor NATIVO de aplicativos bancários compatíveis com PIX.
+ * Indica que o fluxo nativo de descoberta de apps financeiros está disponível.
  *
  * LIMITAÇÃO TÉCNICA REAL (sem simulação):
  *  - Nenhum web app consegue abrir o seletor de apps do Android/iOS. Não existe API web
@@ -64,9 +60,9 @@ export function isNativeContainer(): boolean {
  *    usa integração própria, dependente de um PROVEDOR DE PAGAMENTO que forneça a
  *    cobrança (destino) válida. Sem esse destino, não há ação válida a acionar.
  *
- * No app nativo (empacotado com Capacitor), o plugin local `BankApps` lista os apps
- * bancários instalados e abre o banco escolhido — aqui sinalizamos `native-available`
- * para o frontend exibir esse fluxo. No web, o resultado é sempre `{ opened: false, ... }`.
+ * No app nativo (empacotado com Capacitor), o plugin local `BankApps` descobre os apps
+ * financeiros instalados sem abri-los. A abertura só ocorre depois que o usuário seleciona
+ * um item no frontend. No web, o resultado é sempre `{ opened: false, ... }`.
  */
 export function openPixPicker(): PickerOutcome {
   if (isNativeContainer()) {
@@ -77,8 +73,8 @@ export function openPixPicker(): PickerOutcome {
 
 /**
  * Acesso ao plugin nativo `BankApps` (Capacitor). Só é carregado dinamicamente dentro
- * de um contêiner nativo — no navegador comum `@capacitor/core` nunca é importado o
- * the runtime, mantendo o web puro e honesto.
+ * de um contêiner nativo — no navegador comum `@capacitor/core` nunca é importado em
+ * runtime, mantendo o web puro e honesto.
  */
 /**
  * O plugin devolvido por `registerPlugin` é um Proxy que responde a QUALQUER
@@ -104,28 +100,12 @@ async function loadBankApps(): Promise<BankAppsHandle | null> {
   return bankAppsCache;
 }
 
-/** Lista apps bancários instalados no dispositivo (só em contêiner nativo). */
+/** Lista apps financeiros lançáveis instalados no dispositivo sem abri-los. */
 export async function getInstalledBanks(): Promise<InstalledBank[]> {
   const handle = await loadBankApps();
   if (!handle) return [];
   try {
     const res = await handle.api.getInstalledBanks();
-    return Array.isArray(res?.banks) ? res.banks : [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Lista OUTROS bancos/carteiras digitais instalados (fora da lista de bancos
- * "cadastrados" exibidos como botões fixos). Alimenta a opção
- * "Escolher outro app bancário". Só retorna apps realmente instalados.
- */
-export async function getOtherBankApps(): Promise<InstalledBank[]> {
-  const handle = await loadBankApps();
-  if (!handle) return [];
-  try {
-    const res = await handle.api.getOtherBankApps();
     return Array.isArray(res?.banks) ? res.banks : [];
   } catch {
     return [];
@@ -138,23 +118,6 @@ export async function openInstalledBank(id: string): Promise<{ opened: boolean; 
   if (!handle) return { opened: false, error: "not-native" };
   try {
     return await handle.api.openBank({ id });
-  } catch (err) {
-    return {
-      opened: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
-/**
- * Abre o seletor NATIVO de apps de banco do aparelho (só em contêiner nativo).
- * O próprio Android mostra os apps de banco instalados e o usuário escolhe ali.
- */
-export async function openBankChooser(): Promise<ChooserResult> {
-  const handle = await loadBankApps();
-  if (!handle) return { opened: false, error: "not-native" };
-  try {
-    return await handle.api.openBankChooser();
   } catch (err) {
     return {
       opened: false,
