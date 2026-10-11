@@ -41,6 +41,11 @@
 
     <!-- Android 11+ package visibility: known bank apps we may open via PIX -->
     <queries>
+        <!-- Permite enumerar os apps "launcher" para montar o seletor de bancos (excluindo os nao-bancos) -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
         <package android:name="com.nu.production" />
         <package android:name="com.itau" />
         <package android:name="com.bradesco" />

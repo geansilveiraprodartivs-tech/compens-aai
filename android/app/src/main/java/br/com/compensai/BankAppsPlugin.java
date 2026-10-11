@@ -1,11 +1,14 @@
 package br.com.compensai;
 
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -161,12 +164,13 @@ public class BankAppsPlugin extends Plugin {
         }
     }
 
-    private void addChooserTargets(PackageManager pm, List<Intent> out, String[][] apps) {
+    private void addChooserTargets(PackageManager pm, List<Intent> out, Set<String> installed, String[][] apps) {
         for (String[] app : apps) {
             Intent launch = pm.getLaunchIntentForPackage(app[1]);
             if (launch == null) {
                 continue;
             }
+            installed.add(app[1]);
             launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             out.add(launch);
         }
@@ -174,32 +178,56 @@ public class BankAppsPlugin extends Plugin {
 
     /**
      * Abre o seletor NATIVO do Android ("Abrir com") contendo apenas os apps de banco/carteira
-     * instalados no aparelho. O usuário escolhe ali e o banco é aberto pelo próprio sistema.
+     * instalados no aparelho. Usa a lista "launcher" como base e EXCLUI todos os apps que nao
+     * sao bancos do catalogo — assim o seletor mostra uma LISTA VERTICAL COMPLETA (todos os bancos),
+     * em vez da fileira horizontal de "previa" que aparece quando se usa EXTRA_INITIAL_INTENTS.
      */
     @PluginMethod
     public void openBankChooser(PluginCall call) {
         PackageManager pm = getContext().getPackageManager();
+        Set<String> installed = new HashSet<>();
         List<Intent> targets = new ArrayList<>();
-        addChooserTargets(pm, targets, KNOWN_BANK_APPS);
-        addChooserTargets(pm, targets, OTHER_BANK_APPS);
+        addChooserTargets(pm, targets, installed, KNOWN_BANK_APPS);
+        addChooserTargets(pm, targets, installed, OTHER_BANK_APPS);
         if (targets.isEmpty()) {
             call.reject("No bank apps installed", "NO_BANK_APPS");
             return;
         }
-        Intent base = targets.get(0);
-        Intent chooser = Intent.createChooser(base, "Escolha o app do banco");
-        if (targets.size() > 1) {
-            List<Intent> rest = new ArrayList<>(targets.subList(1, targets.size()));
-            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, rest.toArray(new Intent[0]));
-        }
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        JSObject ret = new JSObject();
+
+        Intent chooser;
         try {
+            Intent main = new Intent(Intent.ACTION_MAIN);
+            main.addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> launchers = pm.queryIntentActivities(main, 0);
+
+            if (!launchers.isEmpty()) {
+                List<ComponentName> exclude = new ArrayList<>();
+                for (ResolveInfo ri : launchers) {
+                    String pkg = ri.activityInfo.packageName;
+                    if (!installed.contains(pkg)) {
+                        exclude.add(new ComponentName(pkg, ri.activityInfo.name));
+                    }
+                }
+                chooser = Intent.createChooser(main, "Escolha o app do banco");
+                if (!exclude.isEmpty()) {
+                    chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, exclude.toArray(new ComponentName[0]));
+                }
+            } else {
+                // Fallback: sem visibilidade de launcher, monta via intents explicitos.
+                chooser = Intent.createChooser(targets.get(0), "Escolha o app do banco");
+                if (targets.size() > 1) {
+                    List<Intent> rest = new ArrayList<>(targets.subList(1, targets.size()));
+                    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, rest.toArray(new Intent[0]));
+                }
+            }
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(chooser);
+            JSObject ret = new JSObject();
             ret.put("opened", true);
             ret.put("count", targets.size());
             call.resolve(ret);
         } catch (Exception e) {
+            JSObject ret = new JSObject();
             ret.put("opened", false);
             ret.put("error", e.getMessage());
             call.resolve(ret);
