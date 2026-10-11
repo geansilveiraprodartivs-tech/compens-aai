@@ -1,13 +1,11 @@
 package br.com.compensai;
 
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.util.Base64;
 
 import com.getcapacitor.JSArray;
@@ -18,24 +16,56 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.ByteArrayOutputStream;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 
 @CapacitorPlugin(name = "BankApps")
 public class BankAppsPlugin extends Plugin {
     private static final int ICON_SIZE_PX = 96;
 
-    private Intent launcherIntent() {
-        Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_LAUNCHER);
-        return intent;
-    }
-
-    private boolean isFinancialApp(ApplicationInfo app) {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && app.category == ApplicationInfo.CATEGORY_FINANCE;
-    }
+    /* Android does not classify all banking apps consistently. Each candidate is still checked
+       against PackageManager, so only installed apps with a real launch activity are returned. */
+    private static final String[][] COMPATIBLE_APPS = {
+            {"com.nu.production"},
+            {"com.itau"},
+            {"com.bradesco"},
+            {"br.com.bb.android"},
+            {"br.gov.caixa.tem"},
+            {"br.com.gabba.Caixa"},
+            {"com.santander.app"},
+            {"br.com.intermedium"},
+            {"com.picpay"},
+            {"com.mercadopago.wallet"},
+            {"br.com.uol.ps.myaccount"},
+            {"com.c6bank.app"},
+            {"br.com.neon"},
+            {"br.com.bradesco.next"},
+            {"br.com.sicoobnet"},
+            {"br.com.sicredimobi.smart"},
+            {"br.com.bancopan.cartoes"},
+            {"com.votorantim.bvpd"},
+            {"com.btg.pactual.banking"},
+            {"br.com.bancobmg.bancodigital"},
+            {"com.mercantil"},
+            {"br.com.banrisul"},
+            {"br.com.digio"},
+            {"br.com.cora.bank"},
+            {"br.com.stone.ton"},
+            {"io.cloudwalk.infinitepaydash"},
+            {"com.recarga.recarga"},
+            {"com.pay99.wallet"},
+            {"br.com.unicredmobile"},
+            {"br.com.a27bank"},
+            {"br.com.koin"},
+            {"br.com.dmcard.contadigital"},
+            {"br.com.agipag.app"},
+            {"br.com.meliuz"},
+            {"com.google.android.apps.walletnfcrel"},
+            {"com.samsung.android.spay"},
+            {"com.paypal.android.p2pmobile"},
+            {"com.transferwise.android"},
+            {"com.revolut.revolut"},
+            {"br.gov.caixa.fgts.trabalhador"},
+            {"br.com.cakto"},
+    };
 
     private String iconDataUrl(Drawable icon) {
         if (icon == null) return "";
@@ -55,47 +85,42 @@ public class BankAppsPlugin extends Plugin {
         }
     }
 
+    private Intent launchIntent(PackageManager pm, String packageName) {
+        Intent launch = pm.getLaunchIntentForPackage(packageName);
+        return launch != null && pm.resolveActivity(launch, 0) != null ? launch : null;
+    }
+
+    private boolean isCompatiblePackage(String packageName) {
+        for (String[] candidate : COMPATIBLE_APPS) {
+            if (candidate[0].equals(packageName)) return true;
+        }
+        return false;
+    }
+
     private JSArray discoverBankApps() {
         PackageManager pm = getContext().getPackageManager();
-        List<ResolveInfo> launchers = pm.queryIntentActivities(launcherIntent(), PackageManager.MATCH_ALL);
         JSArray banks = new JSArray();
-        Set<String> seenPackages = new HashSet<>();
 
-        for (ResolveInfo resolved : launchers) {
-            if (resolved.activityInfo == null || resolved.activityInfo.applicationInfo == null) continue;
+        for (String[] candidate : COMPATIBLE_APPS) {
+            String packageName = candidate[0];
+            Intent launch = launchIntent(pm, packageName);
+            if (launch == null) continue;
 
-            ApplicationInfo app = resolved.activityInfo.applicationInfo;
-            String packageName = app.packageName;
-            if (!isFinancialApp(app) || !seenPackages.add(packageName)) continue;
-
-            Intent launch = pm.getLaunchIntentForPackage(packageName);
-            if (launch == null || pm.resolveActivity(launch, 0) == null) continue;
-
-            CharSequence appLabel = app.loadLabel(pm);
+            ResolveInfo activity = pm.resolveActivity(launch, 0);
+            CharSequence appLabel = activity == null ? null : activity.loadLabel(pm);
             String label = appLabel == null ? packageName : appLabel.toString();
             JSObject bank = new JSObject();
             bank.put("id", packageName);
             bank.put("name", label);
             bank.put("label", label);
-            bank.put("icon", iconDataUrl(app.loadIcon(pm)));
+            bank.put("icon", activity == null ? "" : iconDataUrl(activity.loadIcon(pm)));
             banks.put(bank);
         }
 
         return banks;
     }
 
-    private boolean isDiscoveredBank(String packageName) {
-        PackageManager pm = getContext().getPackageManager();
-        for (ResolveInfo resolved : pm.queryIntentActivities(launcherIntent(), PackageManager.MATCH_ALL)) {
-            if (resolved.activityInfo == null || resolved.activityInfo.applicationInfo == null) continue;
-
-            ApplicationInfo app = resolved.activityInfo.applicationInfo;
-            if (packageName.equals(app.packageName) && isFinancialApp(app)) return true;
-        }
-        return false;
-    }
-
-    /** Descobre apps financeiros lançáveis sem abrir nenhum deles. */
+    /** Discovers installed compatible apps without opening any of them. */
     @PluginMethod
     public void getInstalledBanks(PluginCall call) {
         JSObject result = new JSObject();
@@ -103,7 +128,7 @@ public class BankAppsPlugin extends Plugin {
         call.resolve(result);
     }
 
-    /** Abre somente um app que a descoberta atual reconhece como financeiro e lançável. */
+    /** Opens only the compatible app the user selected in the device list. */
     @PluginMethod
     public void openBank(PluginCall call) {
         String id = call.getString("id");
@@ -111,14 +136,14 @@ public class BankAppsPlugin extends Plugin {
             call.reject("Bank id is required", "INVALID_BANK_ID");
             return;
         }
-        if (!isDiscoveredBank(id)) {
+        if (!isCompatiblePackage(id)) {
             call.reject("Unsupported bank app: " + id, "UNSUPPORTED_BANK");
             return;
         }
 
         PackageManager pm = getContext().getPackageManager();
-        Intent intent = pm.getLaunchIntentForPackage(id);
-        if (intent == null || pm.resolveActivity(intent, 0) == null) {
+        Intent intent = launchIntent(pm, id);
+        if (intent == null) {
             call.reject("Bank app not installed: " + id, "BANK_NOT_INSTALLED");
             return;
         }
