@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   CheckCircle2,
   Grid2x2,
@@ -8,19 +8,16 @@ import {
   ShieldCheck,
   Smartphone,
   Wallet,
-  X,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
-  getInstalledBanks,
   getPlatform,
-  openInstalledBank,
+  openBankChooser,
   openPixPicker,
   platformHint,
-  type InstalledBank,
   type PickerOutcome,
 } from "@/lib/pix";
 
@@ -44,36 +41,10 @@ export const Route = createFileRoute("/_authenticated/pix")({
 
 type Payment = { id: string; status: string; created_at: string; paid_at: string | null };
 
-/** Bancos que o usuário removeu da lista pré-definida (persistido no aparelho). */
-const HIDDEN_BANKS_KEY = "compensai.hiddenBanks.v1";
-
-function loadHiddenBanks(): string[] {
-  try {
-    const raw = localStorage.getItem(HIDDEN_BANKS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
 /** Ícone + texto como um único grupo centralizado (ícone e legenda na mesma linha). */
 function Group({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center justify-center gap-2 text-center">{children}</span>
-  );
-}
-
-function BankAppLabel({ bank }: { bank: InstalledBank }) {
-  return (
-    <Group>
-      {bank.icon ? (
-        <img src={bank.icon} alt="" className="size-5 shrink-0 rounded" />
-      ) : (
-        <Wallet className="size-4 shrink-0" />
-      )}
-      <span>{bank.label || bank.name}</span>
-    </Group>
   );
 }
 
@@ -82,15 +53,6 @@ function PagarCompra() {
   const [step, setStep] = useState<"start" | "info" | "ask">("start");
   const [current, setCurrent] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<PickerOutcome>({ opened: false, reason: "browser" });
-  const [banks, setBanks] = useState<InstalledBank[] | null>(null);
-  const [deviceBanks, setDeviceBanks] = useState<InstalledBank[] | null>(null);
-  const [showDeviceBanks, setShowDeviceBanks] = useState(false);
-  const [openingId, setOpeningId] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<string[]>([]);
-
-  useEffect(() => {
-    setHidden(loadHiddenBanks());
-  }, []);
 
   const isNativeAvailable = outcome.opened === false && outcome.reason === "native-available";
 
@@ -105,15 +67,6 @@ function PagarCompra() {
       return data as Payment[];
     },
   });
-
-  /** Lista principal sem os bancos que o usuário removeu; a lista do dispositivo nunca os oculta. */
-  const visibleBanks = (banks ?? []).filter((b) => !hidden.includes(b.id));
-
-  async function maybeLoadBanks(o: PickerOutcome) {
-    if (o.opened === false && o.reason === "native-available") {
-      setBanks(await getInstalledBanks());
-    }
-  }
 
   async function startPay(retryId?: string) {
     let id = retryId ?? null;
@@ -134,10 +87,6 @@ function PagarCompra() {
     setCurrent(id);
     const o = openPixPicker();
     setOutcome(o);
-    setBanks(null);
-    setDeviceBanks(null);
-    setShowDeviceBanks(false);
-    await maybeLoadBanks(o);
     setStep("info");
   }
 
@@ -145,51 +94,29 @@ function PagarCompra() {
     setCurrent(p.id);
     const o = openPixPicker();
     setOutcome(o);
-    setBanks(null);
-    setDeviceBanks(null);
-    setShowDeviceBanks(false);
-    void maybeLoadBanks(o);
     setStep("info");
   }
 
-  async function openBank(id: string) {
-    setOpeningId(id);
-    const res = await openInstalledBank(id);
-    setOpeningId(null);
-    if (res.opened) {
-      toast.info("Abra o banco e faça o PIX.", { duration: 6000 });
-    } else {
-      toast.error(
-        res.error ? `Não foi possível abrir: ${res.error}` : "Não foi possível abrir o banco.",
-      );
+  async function openChooser() {
+    const res = await openBankChooser();
+    if (res.opened) return;
+    if (res.error === "not-native") {
+      toast.error("Disponível apenas no aplicativo instalado no celular.");
+      return;
     }
-  }
-
-  function persistHidden(next: string[]) {
-    setHidden(next);
-    try {
-      localStorage.setItem(HIDDEN_BANKS_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
+    if (res.error?.includes("No bank apps installed")) {
+      toast.error("Nenhum app de banco ou carteira compatível foi encontrado neste aparelho.");
+      return;
     }
-  }
-
-  /** Remove um banco só da lista principal; a lista do dispositivo permanece completa. */
-  function hideBank(id: string) {
-    persistHidden(Array.from(new Set([...hidden, id])));
-    toast.info("Banco removido da sua lista.");
-  }
-
-  function restoreBanks() {
-    persistHidden([]);
-    toast.success("Bancos removidos foram restaurados.");
-  }
-
-  /** Descobre e mostra a lista; não inicia nenhuma activity de banco nesta etapa. */
-  async function showInstalledBankApps() {
-    setShowDeviceBanks(true);
-    setDeviceBanks(null);
-    setDeviceBanks(await getInstalledBanks());
+    if (platform === "ios") {
+      toast.error("O iPhone não disponibiliza um seletor de aplicativos instalados.");
+      return;
+    }
+    toast.error(
+      res.error
+        ? `Não foi possível abrir o seletor: ${res.error}`
+        : "Não foi possível abrir o seletor de apps.",
+    );
   }
 
   async function answer(paid: boolean) {
@@ -242,107 +169,20 @@ function PagarCompra() {
             {isNativeAvailable ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Escolha o app do banco instalado no seu celular. O CompensAI abre o banco e você
-                  faz o PIX por lá — depois volte para registrar.
+                  Use o seletor do sistema para escolher um app de banco instalado. Depois volte
+                  para registrar o pagamento.
                 </p>
-                {banks === null ? (
-                  <p className="text-xs text-muted-foreground">
-                    Verificando apps de banco instalados…
-                  </p>
-                ) : visibleBanks.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    {hidden.length > 0
-                      ? "Você removeu todos os bancos da sua lista. Use “Restaurar” abaixo ou veja os apps no dispositivo."
-                      : "Nenhum app de banco compatível foi encontrado neste aparelho. Use o botão abaixo para ver os apps instalados."}
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {visibleBanks.map((b) => (
-                      <li key={b.id} className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          className="h-11 flex-1 justify-between"
-                          disabled={openingId !== null}
-                          onClick={() => void openBank(b.id)}
-                        >
-                          <BankAppLabel bank={b} />
-                          <span className="text-xs text-muted-foreground">
-                            {openingId === b.id ? "Abrindo…" : "Abrir"}
-                          </span>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive"
-                          disabled={openingId !== null}
-                          onClick={() => hideBank(b.id)}
-                          aria-label={`Remover ${b.label || b.name} da lista`}
-                          title="Remover da minha lista"
-                        >
-                          <X className="size-4" />
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {hidden.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-muted-foreground"
-                    onClick={() => restoreBanks()}
-                  >
-                    <Group>
-                      <RotateCcw className="size-3.5 shrink-0" />
-                      <span>Restaurar bancos removidos ({hidden.length})</span>
-                    </Group>
-                  </Button>
-                )}
                 <Button
                   variant="secondary"
                   className="h-11 w-full justify-between"
-                  disabled={openingId !== null}
-                  onClick={() => void showInstalledBankApps()}
+                  onClick={() => void openChooser()}
                 >
                   <Group>
                     <Grid2x2 className="size-4 shrink-0" />
                     <span>Ver apps de banco no meu dispositivo</span>
                   </Group>
-                  <span className="text-xs text-muted-foreground">Mostrar</span>
+                  <span className="text-xs text-muted-foreground">Abrir</span>
                 </Button>
-                {showDeviceBanks && (
-                  <section className="space-y-2 rounded-md border border-border p-3">
-                    <p className="text-sm font-semibold">Apps de banco do meu dispositivo</p>
-                    {deviceBanks === null ? (
-                      <p className="text-xs text-muted-foreground">
-                        Verificando apps financeiros instalados…
-                      </p>
-                    ) : deviceBanks.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        Nenhum app de banco ou carteira digital compatível foi encontrado neste
-                        aparelho.
-                      </p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {deviceBanks.map((b) => (
-                          <li key={b.id}>
-                            <Button
-                              variant="outline"
-                              className="h-11 w-full justify-between"
-                              disabled={openingId !== null}
-                              onClick={() => void openBank(b.id)}
-                            >
-                              <BankAppLabel bank={b} />
-                              <span className="text-xs text-muted-foreground">
-                                {openingId === b.id ? "Abrindo…" : "Abrir"}
-                              </span>
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-                )}
               </>
             ) : outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
               <p className="text-sm text-muted-foreground">

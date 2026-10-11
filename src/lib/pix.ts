@@ -7,17 +7,11 @@ export type PickerOutcome =
       reason: "browser" | "no-valid-pix-destination" | "native-available";
     };
 
-export interface InstalledBank {
-  id: string;
-  name: string;
-  label: string;
-  icon: string;
-}
-
 type BankAppsApi = {
-  getInstalledBanks: () => Promise<{ banks: InstalledBank[] }>;
-  openBank: (opts: { id: string }) => Promise<{ opened: boolean; error?: string }>;
+  openBankChooser: () => Promise<{ opened: boolean; count?: number; error?: string }>;
 };
+
+export type ChooserResult = { opened: boolean; count?: number; error?: string };
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -49,7 +43,7 @@ export function isNativeContainer(): boolean {
 }
 
 /**
- * Indica que o fluxo nativo de descoberta de apps financeiros está disponível.
+ * Indica que o seletor nativo de apps financeiros está disponível.
  *
  * LIMITAÇÃO TÉCNICA REAL (sem simulação):
  *  - Nenhum web app consegue abrir o seletor de apps do Android/iOS. Não existe API web
@@ -60,9 +54,8 @@ export function isNativeContainer(): boolean {
  *    usa integração própria, dependente de um PROVEDOR DE PAGAMENTO que forneça a
  *    cobrança (destino) válida. Sem esse destino, não há ação válida a acionar.
  *
- * No app nativo (empacotado com Capacitor), o plugin local `BankApps` descobre os apps
- * financeiros instalados sem abri-los. A abertura só ocorre depois que o usuário seleciona
- * um item no frontend. No web, o resultado é sempre `{ opened: false, ... }`.
+ * No app nativo Android, o plugin local `BankApps` delega a escolha ao seletor do sistema.
+ * No iOS, não existe seletor equivalente. No web, o resultado é sempre `{ opened: false, ... }`.
  */
 export function openPixPicker(): PickerOutcome {
   if (isNativeContainer()) {
@@ -100,24 +93,12 @@ async function loadBankApps(): Promise<BankAppsHandle | null> {
   return bankAppsCache;
 }
 
-/** Lista apps financeiros lançáveis instalados no dispositivo sem abri-los. */
-export async function getInstalledBanks(): Promise<InstalledBank[]> {
-  const handle = await loadBankApps();
-  if (!handle) return [];
-  try {
-    const res = await handle.api.getInstalledBanks();
-    return Array.isArray(res?.banks) ? res.banks : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Abre o app do banco escolhido (só em contêiner nativo; web retorna não-nativo). */
-export async function openInstalledBank(id: string): Promise<{ opened: boolean; error?: string }> {
+/** Abre o seletor do sistema em Android; iOS informa que não oferece essa capacidade. */
+export async function openBankChooser(): Promise<ChooserResult> {
   const handle = await loadBankApps();
   if (!handle) return { opened: false, error: "not-native" };
   try {
-    return await handle.api.openBank({ id });
+    return await handle.api.openBankChooser();
   } catch (err) {
     return {
       opened: false,

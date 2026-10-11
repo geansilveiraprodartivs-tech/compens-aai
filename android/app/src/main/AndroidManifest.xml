@@ -41,6 +41,10 @@
 
     <!-- Android 11+ package visibility for the payment apps supported by the native plugin. -->
     <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
         <package android:name="com.nu.production" />
         <package android:name="com.itau" />
         <package android:name="com.bradesco" />
