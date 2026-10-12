@@ -103,15 +103,39 @@ public class BankAppsPlugin extends Plugin {
             "com.nu.production.wallet",
     };
 
-    /** Palavras que indicam banco/carteira quando o app não está no catálogo. */
+    /**
+     * Palavras que indicam banco/carteira quando o app não está no catálogo.
+     * Casadas como PALAVRA INTEIRA (não substring) para evitar falsos positivos como
+     * "Pinterest"/"interactive" batendo com "inter".
+     */
     static final String[] FINANCIAL_KEYWORDS = {
             "banco", "bank", "banking", "carteira", "wallet", "pagamento", "pagamentos",
-            "pix", "pay", "credito", "crédito", "financeira", "investimento", "invest",
+            "pix", "credito", "crédito", "financeira", "investimento", "investimentos",
             "corretora", "nubank", "itau", "itaú", "bradesco", "santander", "caixa",
             "sicoob", "sicredi", "banrisul", "mercantil", "bancopan", "bmg", "btg",
-            "inter", "neon", "will bank", "picpay", "pagbank", "mercadopago",
-            "mercado pago", "paypal", "wise", "revolut", "recarga", "ton ", "infinitepay",
+            "inter", "neon", "next", "picpay", "pagbank", "mercadopago", "mercado pago",
+            "paypal", "wise", "revolut", "recarga", "ton", "infinitepay", "c6",
     };
+
+    private static boolean isWordChar(char c) {
+        return Character.isLetterOrDigit(c);
+    }
+
+    /** Verifica se `word` aparece em `haystack` delimitada por fronteiras de palavra. */
+    private static boolean hasWord(String haystack, String word) {
+        if (word == null || word.isEmpty()) return false;
+        int from = 0;
+        while (true) {
+            int idx = haystack.indexOf(word, from);
+            if (idx < 0) return false;
+            int before = idx - 1;
+            int after = idx + word.length();
+            boolean okBefore = before < 0 || !isWordChar(haystack.charAt(before));
+            boolean okAfter = after >= haystack.length() || !isWordChar(haystack.charAt(after));
+            if (okBefore && okAfter) return true;
+            from = idx + 1;
+        }
+    }
 
     // ------------------------------------------------------------------
     // Utilitários
@@ -139,11 +163,11 @@ public class BankAppsPlugin extends Plugin {
             return isWalletPackage(pkg) ? "wallet" : "bank";
         }
         String haystack = (pkg + " " + (label == null ? "" : label)).toLowerCase(new Locale("pt", "BR"));
-        if (haystack.contains("wallet") || haystack.contains("carteira") || haystack.contains("pay")) {
+        if (hasWord(haystack, "wallet") || hasWord(haystack, "carteira") || hasWord(haystack, "pay")) {
             return "wallet";
         }
         for (String kw : FINANCIAL_KEYWORDS) {
-            if (haystack.contains(kw)) return "bank";
+            if (hasWord(haystack, kw)) return "bank";
         }
         return "other";
     }
@@ -151,8 +175,11 @@ public class BankAppsPlugin extends Plugin {
     private boolean isFinancial(String category, String pkg, String label) {
         if (!"other".equals(category)) return true;
         String haystack = (pkg + " " + (label == null ? "" : label)).toLowerCase(new Locale("pt", "BR"));
+        if (hasWord(haystack, "wallet") || hasWord(haystack, "carteira") || hasWord(haystack, "pay")) {
+            return true;
+        }
         for (String kw : FINANCIAL_KEYWORDS) {
-            if (haystack.contains(kw)) return true;
+            if (hasWord(haystack, kw)) return true;
         }
         return false;
     }
