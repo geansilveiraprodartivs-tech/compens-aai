@@ -39,22 +39,58 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Android 11+ package visibility for the bank apps the user can open. -->
+    <!--
+      Android 11+ (API 30+) package visibility.
+      A consulta <intent> abaixo permite ao plugin BankApps (listApps) ENUMERAR os
+      aplicativos instalados que possuem launcher — é a descoberta real, feita pelo
+      próprio sistema, sem lista fixa. As consultas <package> mantêm a abertura dos
+      bancos pré-cadastrados do CompensAI.
+    -->
     <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+
         <package android:name="com.nu.production" />
         <package android:name="br.com.gabba.Caixa" />
         <package android:name="br.gov.caixa.tem" />
+        <package android:name="br.gov.caixa.fgts.trabalhador" />
         <package android:name="br.com.bb.android" />
         <package android:name="com.bradesco" />
+        <package android:name="br.com.bradesco.next" />
         <package android:name="com.itau" />
         <package android:name="com.santander.app" />
         <package android:name="br.com.intermedium" />
         <package android:name="com.c6bank.app" />
+        <package android:name="br.com.neon" />
         <package android:name="br.com.bancopan.cartoes" />
+        <package android:name="br.com.sicoobnet" />
+        <package android:name="br.com.sicredimobi.smart" />
+        <package android:name="com.votorantim.bvpd" />
+        <package android:name="com.btg.pactual.banking" />
+        <package android:name="br.com.bancobmg.bancodigital" />
+        <package android:name="com.mercantil" />
+        <package android:name="br.com.banrisul" />
+        <package android:name="br.com.digio" />
+        <package android:name="br.com.cora.bank" />
+        <package android:name="br.com.stone.ton" />
+        <package android:name="io.cloudwalk.infinitepaydash" />
+        <package android:name="com.recarga.recarga" />
+        <package android:name="com.pay99.wallet" />
+        <package android:name="br.com.unicredmobile" />
+        <package android:name="br.com.a27bank" />
+        <package android:name="br.com.koin" />
+        <package android:name="br.com.dmcard.contadigital" />
+        <package android:name="br.com.agipag.app" />
         <package android:name="com.picpay" />
         <package android:name="com.mercadopago.wallet" />
         <package android:name="br.com.uol.ps.myaccount" />
         <package android:name="com.google.android.apps.walletnfcrel" />
         <package android:name="com.samsung.android.spay" />
+        <package android:name="com.paypal.android.p2pmobile" />
+        <package android:name="com.transferwise.android" />
+        <package android:name="com.revolut.revolut" />
+        <package android:name="br.com.cakto" />
     </queries>
 </manifest>

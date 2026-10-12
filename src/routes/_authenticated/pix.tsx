@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, RotateCcw, ShieldCheck, Smartphone, Wallet, X, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Smartphone,
+  Wallet,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -13,10 +22,17 @@ import { selectPurchaseItems, summarizePurchase, type PurchaseItem } from "@/lib
 import {
   BANK_APPS,
   type BankApp,
+  type BankPrefs,
+  type DeviceApp,
+  emptyBankPrefs,
   getPlatform,
   isNativeContainer,
+  listDeviceApps,
+  loadBankPrefs,
   openBankApp,
+  openDeviceApp,
   platformHint,
+  saveBankPrefs,
 } from "@/lib/pix";
 
 export const Route = createFileRoute("/_authenticated/pix")({
@@ -52,6 +68,12 @@ function loadHiddenBanks(): string[] {
   }
 }
 
+function categoryLabel(category: DeviceApp["category"]): string {
+  if (category === "wallet") return "Carteira";
+  if (category === "bank") return "Banco";
+  return "Aplicativo";
+}
+
 function SummaryStat({
   label,
   value,
@@ -73,6 +95,11 @@ function PagarCompra() {
   const [step, setStep] = useState<"start" | "info" | "ask" | "done">("start");
   const [hidden, setHidden] = useState<string[]>([]);
   const [result, setResult] = useState<PurchaseResult | null>(null);
+  const [deviceApps, setDeviceApps] = useState<DeviceApp[] | null>(null);
+  const [appsSupported, setAppsSupported] = useState(true);
+  const [showAllApps, setShowAllApps] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [prefs, setPrefs] = useState<BankPrefs>(emptyBankPrefs);
 
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
@@ -80,13 +107,26 @@ function PagarCompra() {
   const preview = summarizePurchase(selectPurchaseItems(items));
   const { confirm } = usePurchase(list?.id, items);
 
+  const { data: uid } = useQuery({
+    queryKey: ["auth-user-id"],
+    queryFn: async () => {
+      const { data } = await supabase.auth.getUser();
+      return data.user?.id ?? null;
+    },
+  });
+
   useEffect(() => {
     setHidden(loadHiddenBanks());
   }, []);
 
+  useEffect(() => {
+    if (uid) setPrefs(loadBankPrefs(uid));
+  }, [uid]);
+
   const platform = getPlatform();
   const isNative = isNativeContainer();
   const visibleBanks = BANK_APPS.filter((b) => !hidden.includes(b.id));
+  const listedApps = (deviceApps ?? []).filter((a) => showAllApps || a.financial);
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -136,6 +176,66 @@ function PagarCompra() {
   function restoreBanks() {
     persistHidden([]);
     toast.success("Bancos removidos foram restaurados.");
+  }
+
+  async function scanApps() {
+    setScanning(true);
+    try {
+      const res = await listDeviceApps();
+      setAppsSupported(res.supported);
+      setDeviceApps(res.apps);
+      if (!res.supported) {
+        toast.info("Este sistema não permite listar os aplicativos instalados.");
+      } else if (res.apps.length === 0) {
+        toast.info("Nenhum aplicativo compatível encontrado no aparelho.");
+      } else {
+        toast.success(`${res.apps.length} aplicativos encontrados no aparelho.`);
+      }
+    } catch {
+      toast.error("Não foi possível verificar os aplicativos do aparelho.");
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  function persistPrefs(next: BankPrefs) {
+    setPrefs(next);
+    if (uid) saveBankPrefs(uid, next);
+  }
+
+  function setDefaultBank(app: DeviceApp) {
+    persistPrefs({ ...prefs, bank: app });
+    toast.success(`${app.name} definido como banco padrão.`);
+  }
+
+  function setDefaultWallet(app: DeviceApp) {
+    persistPrefs({ ...prefs, wallet: app });
+    toast.success(`${app.name} definido como carteira digital.`);
+  }
+
+  function clearDefaultBank() {
+    persistPrefs({ ...prefs, bank: null });
+  }
+
+  function clearDefaultWallet() {
+    persistPrefs({ ...prefs, wallet: null });
+  }
+
+  async function handleOpenDeviceApp(app: DeviceApp) {
+    const res = await openDeviceApp(app.package);
+    if (res.opened) {
+      toast.info(`Abrindo ${app.name}. Depois volte para registrar o pagamento.`);
+      return;
+    }
+    if (res.reason === "not-native") {
+      toast.error("Disponível apenas no aplicativo instalado no celular.");
+      return;
+    }
+    if (res.reason === "not_installed") {
+      toast.error(`${app.name} não está mais instalado neste aparelho. Escolha outra opção.`);
+      return;
+    }
+    toast.error(`Não foi possível abrir ${app.name}. Selecione outra opção.`);
   }
 
   async function finalize() {
@@ -272,6 +372,192 @@ function PagarCompra() {
               {!isNative && (
                 <p className="text-xs text-muted-foreground">{platformHint(platform)}</p>
               )}
+
+              <div className="space-y-2 rounded-xl border border-border bg-card/40 p-3">
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  <Smartphone className="size-4 text-primary" /> Apps no seu aparelho
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Verificação real dos aplicativos instalados. Escolha um banco padrão e uma
+                  carteira digital — são escolhas independentes.
+                </p>
+
+                {!isNative ? (
+                  <p className="text-xs text-muted-foreground">
+                    A verificação dos apps instalados funciona apenas no aplicativo Android do
+                    CompensAI. No navegador/PWA o sistema não permite listar os apps instalados.
+                  </p>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      disabled={scanning}
+                      onClick={() => void scanApps()}
+                    >
+                      <RefreshCw
+                        className={scanning ? "mr-2 size-4 animate-spin" : "mr-2 size-4"}
+                      />
+                      {deviceApps ? "Verificar novamente" : "Ver apps do dispositivo"}
+                    </Button>
+
+                    {deviceApps && !appsSupported && (
+                      <p className="text-xs text-muted-foreground">
+                        Este sistema não permite listar os aplicativos instalados.
+                      </p>
+                    )}
+
+                    {deviceApps && appsSupported && (
+                      <>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            {listedApps.length} de {deviceApps.length} aplicativos
+                          </span>
+                          <button
+                            type="button"
+                            className="underline"
+                            onClick={() => setShowAllApps((v) => !v)}
+                          >
+                            {showAllApps ? "Mostrar só bancos/carteiras" : "Mostrar todos os apps"}
+                          </button>
+                        </div>
+
+                        {listedApps.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            Nenhum aplicativo bancário ou carteira digital encontrado.
+                          </p>
+                        ) : (
+                          <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
+                            {listedApps.map((app) => (
+                              <li
+                                key={app.package}
+                                className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-2 py-1.5"
+                              >
+                                {app.icon ? (
+                                  <img
+                                    src={app.icon}
+                                    alt=""
+                                    width={28}
+                                    height={28}
+                                    loading="lazy"
+                                    className="size-7 shrink-0 rounded-md object-contain"
+                                  />
+                                ) : (
+                                  <span className="size-7 shrink-0 rounded-md bg-secondary" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium">{app.name}</p>
+                                  <p className="text-[10px] uppercase text-muted-foreground">
+                                    {categoryLabel(app.category)}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => setDefaultBank(app)}
+                                >
+                                  Banco
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  className="h-8 px-2 text-xs"
+                                  onClick={() => setDefaultWallet(app)}
+                                >
+                                  Carteira
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0"
+                                  aria-label={`Abrir ${app.name}`}
+                                  onClick={() => void handleOpenDeviceApp(app)}
+                                >
+                                  <ExternalLink className="size-4" />
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </>
+                    )}
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-border bg-background/40 p-2">
+                        <p className="text-xs text-muted-foreground">Banco padrão</p>
+                        {prefs.bank ? (
+                          <>
+                            <p className="flex items-center gap-2 text-sm font-medium">
+                              {prefs.bank.icon && (
+                                <img
+                                  src={prefs.bank.icon}
+                                  alt=""
+                                  className="size-5 shrink-0 rounded"
+                                />
+                              )}
+                              <span className="truncate">{prefs.bank.name}</span>
+                            </p>
+                            <div className="mt-1 flex gap-1">
+                              <Button
+                                size="sm"
+                                className="h-8"
+                                onClick={() => void handleOpenDeviceApp(prefs.bank as DeviceApp)}
+                              >
+                                Abrir banco
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8"
+                                onClick={clearDefaultBank}
+                              >
+                                Alterar
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Nenhum escolhido.</p>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-border bg-background/40 p-2">
+                        <p className="text-xs text-muted-foreground">Carteira digital</p>
+                        {prefs.wallet ? (
+                          <>
+                            <p className="flex items-center gap-2 text-sm font-medium">
+                              {prefs.wallet.icon && (
+                                <img
+                                  src={prefs.wallet.icon}
+                                  alt=""
+                                  className="size-5 shrink-0 rounded"
+                                />
+                              )}
+                              <span className="truncate">{prefs.wallet.name}</span>
+                            </p>
+                            <div className="mt-1 flex gap-1">
+                              <Button
+                                size="sm"
+                                className="h-8"
+                                onClick={() => void handleOpenDeviceApp(prefs.wallet as DeviceApp)}
+                              >
+                                Abrir carteira
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8"
+                                onClick={clearDefaultWallet}
+                              >
+                                Alterar
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Nenhuma escolhida.</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
 
               <Button className="w-full" onClick={() => setStep("ask")}>
                 <CheckCircle2 className="mr-2 size-4" /> Já fiz o pagamento

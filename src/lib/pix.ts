@@ -120,11 +120,40 @@ export const BANK_APPS: BankApp[] = [
 
 export type OpenBankResult = { opened: boolean; reason?: string };
 
+/** Classificação de um app descoberto no aparelho. */
+export type DeviceAppCategory = "bank" | "wallet" | "other";
+
+/**
+ * Aplicativo INSTALADO descoberto no aparelho (descoberta real via PackageManager no
+ * Android). No iOS a enumeração não existe — `listDeviceApps` informa `supported:false`.
+ */
+export type DeviceApp = {
+  package: string;
+  name: string;
+  category: DeviceAppCategory;
+  financial: boolean;
+  icon?: string;
+};
+
+export type DeviceAppsResult = { supported: boolean; apps: DeviceApp[] };
+
+/** Forma bruta devolvida pelo plugin nativo `BankApps`. */
+export type RawDeviceApp = {
+  package?: string;
+  name?: string;
+  label?: string;
+  category?: string;
+  financial?: boolean;
+  icon?: string;
+};
+
 type BankAppsApi = {
   openConfiguredBank: (options: {
     androidPackage?: string;
     iosScheme?: string;
   }) => Promise<OpenBankResult>;
+  listApps: () => Promise<{ apps?: RawDeviceApp[]; supported?: boolean }>;
+  openApp: (options: { package: string }) => Promise<OpenBankResult>;
 };
 
 export function getPlatform(): DevicePlatform {
@@ -221,6 +250,103 @@ export async function openBankApp(bank: BankApp): Promise<OpenBankResult> {
       opened: false,
       reason: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+/**
+ * DESCOBERTA REAL: lista os aplicativos INSTALADOS no aparelho (Android nativo),
+ * identificados pelo próprio sistema — nome, ícone e classificação banco/carteira.
+ * Não é lista fixa: inclui qualquer app compatível com abertura por launcher.
+ * No navegador/iOS retorna `{ supported:false, apps: [] }` (limitação da plataforma).
+ */
+export function normalizeDeviceApps(raw: RawDeviceApp[] | undefined): DeviceApp[] {
+  const apps: DeviceApp[] = [];
+  for (const r of Array.isArray(raw) ? raw : []) {
+    const pkg = typeof r.package === "string" ? r.package : "";
+    if (!pkg) continue;
+    const category: DeviceAppCategory =
+      r.category === "bank" || r.category === "wallet" || r.category === "other"
+        ? r.category
+        : "other";
+    const name = (r.name || r.label || pkg).trim() || pkg;
+    const app: DeviceApp = {
+      package: pkg,
+      name,
+      category,
+      financial: r.financial === true || category !== "other",
+    };
+    if (typeof r.icon === "string" && r.icon) app.icon = r.icon;
+    apps.push(app);
+  }
+  apps.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return apps;
+}
+
+export async function listDeviceApps(): Promise<DeviceAppsResult> {
+  const handle = await loadBankApps();
+  if (!handle) return { supported: false, apps: [] };
+  try {
+    const res = await handle.api.listApps();
+    return { supported: res?.supported !== false, apps: normalizeDeviceApps(res?.apps) };
+  } catch {
+    return { supported: true, apps: [] };
+  }
+}
+
+/** Abre um app descoberto no aparelho pelo pacote (Android nativo). */
+export async function openDeviceApp(packageName: string): Promise<OpenBankResult> {
+  const handle = await loadBankApps();
+  if (!handle) return { opened: false, reason: "not-native" };
+  try {
+    return await handle.api.openApp({ package: packageName });
+  } catch (err) {
+    return {
+      opened: false,
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/** Preferências do usuário: banco padrão e carteira digital (independentes). */
+export type BankPrefs = { bank: DeviceApp | null; wallet: DeviceApp | null };
+
+const PREFS_PREFIX = "compensai.bankPrefs.v1";
+
+function isDeviceApp(value: unknown): value is DeviceApp {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  return typeof o["package"] === "string" && typeof o["name"] === "string";
+}
+
+export function emptyBankPrefs(): BankPrefs {
+  return { bank: null, wallet: null };
+}
+
+/** Carrega as escolhas do usuário (persistidas no aparelho, por usuário). */
+export function loadBankPrefs(uid: string): BankPrefs {
+  if (!uid) return emptyBankPrefs();
+  try {
+    const raw = localStorage.getItem(`${PREFS_PREFIX}.${uid}`);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return emptyBankPrefs();
+    const o = parsed as Record<string, unknown>;
+    const bank = o["bank"];
+    const wallet = o["wallet"];
+    return {
+      bank: isDeviceApp(bank) ? bank : null,
+      wallet: isDeviceApp(wallet) ? wallet : null,
+    };
+  } catch {
+    return emptyBankPrefs();
+  }
+}
+
+export function saveBankPrefs(uid: string, prefs: BankPrefs): void {
+  if (!uid) return;
+  try {
+    localStorage.setItem(`${PREFS_PREFIX}.${uid}`, JSON.stringify(prefs));
+  } catch {
+    /* ignore */
   }
 }
 
