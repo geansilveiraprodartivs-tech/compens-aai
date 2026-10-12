@@ -75,7 +75,27 @@ function EconomiaPage() {
         <PiggyBank className="size-5 text-accent" /> Economia
       </h1>
 
-      <div className="glass glow p-4">
+      <section className="glass glow p-4">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <Sparkles className="size-4 text-accent" /> Economia na compra aberta
+          {list?.name ? (
+            <span className="font-normal text-muted-foreground">· {list.name}</span>
+          ) : null}
+        </p>
+        <p className="font-display text-3xl font-bold text-success">{brl(totals.realSavings)}</p>
+        <p className="text-[11px] text-muted-foreground">
+          Economia realizada nos itens já marcados na Lista. Confirma ao registrar a compra no menu
+          Pagar.
+        </p>
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-secondary/50 p-2.5">
+          <span className="text-xs text-muted-foreground">
+            💡 Potencial (itens ainda não comprados)
+          </span>
+          <span className="text-sm font-semibold">{brl(totals.potentialSavings)}</span>
+        </div>
+      </section>
+
+      <div className="glass p-4">
         <p className="flex items-center gap-2 text-sm font-semibold">
           <Sparkles className="size-4 text-accent" /> Economia acumulada (confirmada)
         </p>
@@ -83,23 +103,6 @@ function EconomiaPage() {
         <p className="text-[11px] text-muted-foreground">
           Soma das economias já confirmadas em compras pagas.
         </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div className="glass p-4">
-          <p className="text-xs text-muted-foreground">💰 Nesta compra</p>
-          <p className="font-display text-2xl font-bold text-success">{brl(totals.realSavings)}</p>
-          <p className="text-[11px] text-muted-foreground">
-            realizado nos itens já marcados — confirma ao registrar
-          </p>
-        </div>
-        <div className="glass p-4">
-          <p className="text-xs text-muted-foreground">💡 Economia potencial</p>
-          <p className="font-display text-2xl font-bold">{brl(totals.potentialSavings)}</p>
-          <p className="text-[11px] text-muted-foreground">
-            itens ainda não comprados com preço de referência
-          </p>
-        </div>
       </div>
 
       {latestSummary && latestSummary.items.length > 0 && (

@@ -15,10 +15,9 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveList, useListItems, listTotals } from "@/hooks/useList";
+import { useActiveList, useListItems } from "@/hooks/useList";
 import { usePurchase, type PurchaseResult } from "@/hooks/usePurchase";
-import { brl } from "@/lib/compensai";
-import { selectPurchaseItems, summarizePurchase, type PurchaseItem } from "@/lib/savings";
+import { selectPurchaseItems, summarizePurchase } from "@/lib/savings";
 import {
   BANK_APPS,
   type BankApp,
@@ -74,23 +73,6 @@ function categoryLabel(category: DeviceApp["category"]): string {
   return "Aplicativo";
 }
 
-function SummaryStat({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="rounded-xl bg-secondary/50 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`font-semibold ${highlight ? "text-success" : ""}`}>{value}</p>
-    </div>
-  );
-}
-
 function PagarCompra() {
   const [step, setStep] = useState<"start" | "info" | "ask" | "done">("start");
   const [hidden, setHidden] = useState<string[]>([]);
@@ -103,7 +85,6 @@ function PagarCompra() {
 
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
-  const totals = listTotals(items);
   const preview = summarizePurchase(selectPurchaseItems(items));
   const { confirm } = usePurchase(list?.id, items);
 
@@ -270,21 +251,10 @@ function PagarCompra() {
       <section className="glass space-y-2 p-4">
         <p className="text-sm font-semibold">Compra atual</p>
         {canPay ? (
-          <>
-            <div className="flex items-end justify-between">
-              <p className="text-xs text-muted-foreground">Total a pagar</p>
-              <p className="font-display text-2xl font-bold">{brl(preview.paidTotal)}</p>
-            </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{preview.itemsCount} produtos</span>
-              <span>Economia calculada: {brl(preview.savingTotal)}</span>
-            </div>
-            {totals.potentialSavings > 0 && (
-              <p className="text-[11px] text-muted-foreground">
-                Potencial de economia (itens não comprados): {brl(totals.potentialSavings)}
-              </p>
-            )}
-          </>
+          <p className="text-sm text-muted-foreground">
+            {preview.itemsCount} {preview.itemsCount === 1 ? "produto" : "produtos"} para registrar.
+            O valor você confere no caixa; a economia aparece no menu Economia.
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground">
             Sua lista está vazia. Adicione produtos no menu Lista para registrar a compra.
@@ -297,8 +267,8 @@ function PagarCompra() {
           {step === "start" && (
             <>
               <p className="text-sm text-muted-foreground">
-                Ao registrar a compra, o CompensAI confirma o valor pago de cada produto, calcula a
-                economia realizada e guarda no seu histórico.
+                Registre esta compra para guardá-la no seu histórico. O valor é conferido no caixa e
+                a economia aparece no menu Economia.
               </p>
               <Button
                 className="h-12 w-full"
@@ -573,16 +543,8 @@ function PagarCompra() {
             <>
               <p className="text-center text-lg font-bold">A compra foi paga?</p>
               <p className="rounded-xl bg-secondary/60 p-3 text-sm">
-                Vamos registrar <b>{brl(preview.paidTotal)}</b> em <b>{preview.itemsCount}</b>{" "}
-                produtos
-                {preview.savingTotal > 0 ? (
-                  <>
-                    {" "}
-                    e uma economia de <b className="text-success">{brl(preview.savingTotal)}</b>.
-                  </>
-                ) : (
-                  "."
-                )}
+                Vamos registrar <b>{preview.itemsCount}</b>{" "}
+                {preview.itemsCount === 1 ? "produto" : "produtos"} desta compra.
               </p>
               <Button className="w-full" onClick={() => answer(true)} disabled={confirm.isPending}>
                 {confirm.isPending ? "Registrando…" : "SIM, FOI PAGA"}
@@ -606,56 +568,15 @@ function PagarCompra() {
             <CheckCircle2 className="size-5" /> Compra registrada
           </p>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <SummaryStat label="Total gasto" value={brl(result.summary.paidTotal)} />
-            <SummaryStat label="Produtos" value={String(result.summary.itemsCount)} />
-            <SummaryStat
-              label="Economia realizada"
-              value={brl(result.summary.savingTotal)}
-              highlight
-            />
-            <SummaryStat label="Valor de referência" value={brl(result.summary.referenceTotal)} />
-          </div>
+          <p className="text-sm text-muted-foreground">
+            {result.summary.itemsCount}{" "}
+            {result.summary.itemsCount === 1 ? "produto registrado" : "produtos registrados"} no seu
+            histórico.
+          </p>
 
-          {result.summary.savingTotal > 0 ? (
-            <p className="rounded-xl bg-success/10 p-3 text-sm font-semibold text-success">
-              Nesta compra, você economizou {brl(result.summary.savingTotal)}!
-            </p>
-          ) : (
-            <p className="rounded-xl bg-secondary/60 p-3 text-sm text-muted-foreground">
-              Economia confirmada: R$ 0,00. Sem dados suficientes para calcular economia nesta
-              compra.
-            </p>
-          )}
-
-          {result.summary.overpayTotal > 0 && (
-            <p className="text-xs text-destructive">
-              Você pagou {brl(result.summary.overpayTotal)} acima do valor de referência em alguns
-              produtos.
-            </p>
-          )}
-
-          {result.summary.savingItems.length > 0 && (
-            <div>
-              <p className="mb-1 text-sm font-semibold">Produtos que geraram economia</p>
-              <ul className="divide-y divide-border">
-                {result.summary.savingItems.map((it: PurchaseItem) => (
-                  <li
-                    key={`${it.name}-${it.unit}-${it.quantity}`}
-                    className="flex items-center justify-between py-1.5 text-sm"
-                  >
-                    <span className="min-w-0 truncate">
-                      {it.name}{" "}
-                      <span className="text-muted-foreground">
-                        ({it.quantity} {it.unit})
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-success">{brl(it.saving)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <p className="rounded-xl bg-secondary/60 p-3 text-sm text-muted-foreground">
+            Sua economia nesta compra aparece no menu Economia.
+          </p>
 
           <Button
             className="w-full"
