@@ -7,11 +7,125 @@ export type PickerOutcome =
       reason: "browser" | "no-valid-pix-destination" | "native-available";
     };
 
-type BankAppsApi = {
-  openBankChooser: () => Promise<{ opened: boolean; count?: number; error?: string }>;
+/**
+ * Lista INTERNA de bancos e carteiras compatíveis.
+ *
+ * Os nomes, ícones (arquivos locais em `/banks`) e o mecanismo de abertura
+ * (`androidPackage` / `iosScheme`) são predefinidos no código — o app NÃO
+ * descobre, consulta nem lista os aplicativos instalados no aparelho.
+ */
+export type BankApp = {
+  id: string;
+  name: string;
+  icon: string;
+  /** Pacote Android usado para abrir o app da instituição. */
+  androidPackage: string;
+  /** URL scheme oficial do app no iOS, quando conhecido. */
+  iosScheme?: string;
 };
 
-export type ChooserResult = { opened: boolean; count?: number; error?: string };
+export const BANK_APPS: BankApp[] = [
+  {
+    id: "nubank",
+    name: "Nubank",
+    icon: "/banks/nubank.png",
+    androidPackage: "com.nu.production",
+    iosScheme: "nubank://",
+  },
+  {
+    id: "caixa",
+    name: "CAIXA",
+    icon: "/banks/caixa.png",
+    androidPackage: "br.com.gabba.Caixa",
+  },
+  {
+    id: "caixa-tem",
+    name: "CAIXA Tem",
+    icon: "/banks/caixa-tem.png",
+    androidPackage: "br.gov.caixa.tem",
+  },
+  {
+    id: "bb",
+    name: "Banco do Brasil",
+    icon: "/banks/bb.png",
+    androidPackage: "br.com.bb.android",
+  },
+  {
+    id: "bradesco",
+    name: "Bradesco",
+    icon: "/banks/bradesco.png",
+    androidPackage: "com.bradesco",
+  },
+  {
+    id: "itau",
+    name: "Itaú",
+    icon: "/banks/itau.png",
+    androidPackage: "com.itau",
+  },
+  {
+    id: "santander",
+    name: "Santander",
+    icon: "/banks/santander.png",
+    androidPackage: "com.santander.app",
+  },
+  {
+    id: "inter",
+    name: "Inter",
+    icon: "/banks/inter.png",
+    androidPackage: "br.com.intermedium",
+  },
+  {
+    id: "c6",
+    name: "C6 Bank",
+    icon: "/banks/c6.png",
+    androidPackage: "com.c6bank.app",
+  },
+  {
+    id: "pan",
+    name: "Banco PAN",
+    icon: "/banks/pan.png",
+    androidPackage: "br.com.bancopan.cartoes",
+  },
+  {
+    id: "picpay",
+    name: "PicPay",
+    icon: "/banks/picpay.png",
+    androidPackage: "com.picpay",
+  },
+  {
+    id: "mercadopago",
+    name: "Mercado Pago",
+    icon: "/banks/mercadopago.png",
+    androidPackage: "com.mercadopago.wallet",
+  },
+  {
+    id: "pagbank",
+    name: "PagBank",
+    icon: "/banks/pagbank.png",
+    androidPackage: "br.com.uol.ps.myaccount",
+  },
+  {
+    id: "google-wallet",
+    name: "Carteira do Google",
+    icon: "/banks/google-wallet.png",
+    androidPackage: "com.google.android.apps.walletnfcrel",
+  },
+  {
+    id: "samsung-wallet",
+    name: "Samsung Wallet",
+    icon: "/banks/samsung-wallet.png",
+    androidPackage: "com.samsung.android.spay",
+  },
+];
+
+export type OpenBankResult = { opened: boolean; reason?: string };
+
+type BankAppsApi = {
+  openConfiguredBank: (options: {
+    androidPackage?: string;
+    iosScheme?: string;
+  }) => Promise<OpenBankResult>;
+};
 
 export function getPlatform(): DevicePlatform {
   if (typeof navigator === "undefined") return "other";
@@ -43,19 +157,9 @@ export function isNativeContainer(): boolean {
 }
 
 /**
- * Indica que o seletor nativo de apps financeiros está disponível.
- *
- * LIMITAÇÃO TÉCNICA REAL (sem simulação):
- *  - Nenhum web app consegue abrir o seletor de apps do Android/iOS. Não existe API web
- *    (`navigator.*`, intent ou single tab) que liste ou abra os apps instalados. As únicas
- *    opções web são o compartilhamento genérico (proibido) e links com scheme inventado
- *    (proibido também).
- *  - O PIX não define uma ACTION + intent padrão que qualquer banco aceite. Cada banco
- *    usa integração própria, dependente de um PROVEDOR DE PAGAMENTO que forneça a
- *    cobrança (destino) válida. Sem esse destino, não há ação válida a acionar.
- *
- * No app nativo Android, o plugin local `BankApps` delega a escolha ao seletor do sistema.
- * No iOS, não existe seletor equivalente. No web, o resultado é sempre `{ opened: false, ... }`.
+ * Indica que o pagamento é concluído no app do banco escolhido pelo usuário.
+ * No web puro (desktop/Safari/Chrome) não há como abrir outro app, então o
+ * resultado é sempre `{ opened: false, ... }`.
  */
 export function openPixPicker(): PickerOutcome {
   if (isNativeContainer()) {
@@ -67,7 +171,7 @@ export function openPixPicker(): PickerOutcome {
 /**
  * Acesso ao plugin nativo `BankApps` (Capacitor). Só é carregado dinamicamente dentro
  * de um contêiner nativo — no navegador comum `@capacitor/core` nunca é importado em
- * runtime, mantendo o web puro e honesto.
+ * runtime, mantendo o web puro.
  */
 /**
  * O plugin devolvido por `registerPlugin` é um Proxy que responde a QUALQUER
@@ -93,24 +197,37 @@ async function loadBankApps(): Promise<BankAppsHandle | null> {
   return bankAppsCache;
 }
 
-/** Abre o seletor do sistema em Android; iOS informa que não oferece essa capacidade. */
-export async function openBankChooser(): Promise<ChooserResult> {
+/**
+ * Abre o app da instituição escolhida usando SOMENTE o mecanismo oficial
+ * predefinido (pacote Android / scheme iOS). Não descobre apps instalados e não
+ * abre nada antes do usuário escolher.
+ */
+export async function openBankApp(bank: BankApp): Promise<OpenBankResult> {
   const handle = await loadBankApps();
-  if (!handle) return { opened: false, error: "not-native" };
+  if (!handle) return { opened: false, reason: "not-native" };
+
+  const platform = getPlatform();
+  if (platform === "ios" && !bank.iosScheme) {
+    return { opened: false, reason: "not_configured" };
+  }
+
   try {
-    return await handle.api.openBankChooser();
+    return await handle.api.openConfiguredBank({
+      androidPackage: bank.androidPackage,
+      iosScheme: bank.iosScheme,
+    });
   } catch (err) {
     return {
       opened: false,
-      error: err instanceof Error ? err.message : String(err),
+      reason: err instanceof Error ? err.message : String(err),
     };
   }
 }
 
 export function platformHint(platform: DevicePlatform = getPlatform()): string {
   if (platform === "android")
-    return "No Android, uma página web não consegue abrir o seletor nativo de apps de PIX — isso exige um app nativo (ex.: Capacitor) e um destino de cobrança de um provedor de pagamento.";
+    return "O CompensAI precisa estar instalado como aplicativo no celular para abrir o app do seu banco diretamente.";
   if (platform === "ios")
-    return "No iPhone, o Safari não expõe a websites um seletor de apps de PIX. Para abrir o app do banco nativamente, é preciso o app nativo (Universal Links) com destino de cobrança real.";
+    return "Para abrir o app do banco diretamente, use o CompensAI instalado no iPhone.";
   return "No navegador de desktop, abra o app do seu banco no celular e faça o PIX por lá.";
 }

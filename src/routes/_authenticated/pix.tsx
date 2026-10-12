@@ -1,25 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { CheckCircle2, RotateCcw, ShieldCheck, Smartphone, Wallet, XCircle } from "lucide-react";
 import { useState } from "react";
-import {
-  CheckCircle2,
-  Grid2x2,
-  RotateCcw,
-  ShieldCheck,
-  Smartphone,
-  Wallet,
-  XCircle,
-} from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+
 import { Button } from "@/components/ui/button";
-import {
-  getPlatform,
-  openBankChooser,
-  openPixPicker,
-  platformHint,
-  type PickerOutcome,
-} from "@/lib/pix";
+import { supabase } from "@/integrations/supabase/client";
+import { BANK_APPS, type BankApp, getPlatform, isNativeContainer, openBankApp } from "@/lib/pix";
 
 export const Route = createFileRoute("/_authenticated/pix")({
   head: () => ({
@@ -52,9 +39,9 @@ function PagarCompra() {
   const qc = useQueryClient();
   const [step, setStep] = useState<"start" | "info" | "ask">("start");
   const [current, setCurrent] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<PickerOutcome>({ opened: false, reason: "browser" });
 
-  const isNativeAvailable = outcome.opened === false && outcome.reason === "native-available";
+  const platform = getPlatform();
+  const isNative = isNativeContainer();
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -85,37 +72,30 @@ function PagarCompra() {
       qc.invalidateQueries({ queryKey: ["payments"] });
     }
     setCurrent(id);
-    const o = openPixPicker();
-    setOutcome(o);
     setStep("info");
   }
 
   function retryPayment(p: Payment) {
     setCurrent(p.id);
-    const o = openPixPicker();
-    setOutcome(o);
     setStep("info");
   }
 
-  async function openChooser() {
-    const res = await openBankChooser();
-    if (res.opened) return;
-    if (res.error === "not-native") {
+  async function handleOpenBank(bank: BankApp) {
+    const res = await openBankApp(bank);
+    if (res.opened) {
+      toast.info(`Abrindo ${bank.name}. Depois volte para registrar o pagamento.`);
+      return;
+    }
+    if (res.reason === "not-native") {
       toast.error("Disponível apenas no aplicativo instalado no celular.");
       return;
     }
-    if (res.error?.includes("No bank apps installed")) {
-      toast.error("Nenhum app de banco ou carteira compatível foi encontrado neste aparelho.");
-      return;
-    }
-    if (platform === "ios") {
-      toast.error("O iPhone não disponibiliza um seletor de aplicativos instalados.");
+    if (res.reason === "not_configured") {
+      toast.error(`Ainda não há um mecanismo de abertura configurado para ${bank.name}.`);
       return;
     }
     toast.error(
-      res.error
-        ? `Não foi possível abrir o seletor: ${res.error}`
-        : "Não foi possível abrir o seletor de apps.",
+      `Não foi possível abrir ${bank.name}. O app pode não estar instalado ou não ser compatível com este aparelho.`,
     );
   }
 
@@ -133,7 +113,6 @@ function PagarCompra() {
     setStep("start");
   }
 
-  const platform = getPlatform();
   const paid = payments.filter((p) => p.status === "paid");
   const pending = payments.filter((p) => p.status !== "paid");
   const fmt = (d: string) => new Date(d).toLocaleString("pt-BR");
@@ -165,54 +144,35 @@ function PagarCompra() {
             <p className="flex items-center gap-2 text-sm font-semibold">
               <Smartphone className="size-4 text-primary" /> Pagar pelo app do seu banco
             </p>
+            <p className="text-sm text-muted-foreground">
+              Escolha o banco ou carteira abaixo. O app será aberto para você pagar; depois volte
+              para registrar o pagamento.
+            </p>
 
-            {isNativeAvailable ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Use o seletor do sistema para escolher um app de banco instalado. Depois volte
-                  para registrar o pagamento.
-                </p>
-                <Button
-                  variant="secondary"
-                  className="h-11 w-full justify-between"
-                  onClick={() => void openChooser()}
-                >
-                  <Group>
-                    <Grid2x2 className="size-4 shrink-0" />
-                    <span>Ver apps de banco no meu dispositivo</span>
-                  </Group>
-                  <span className="text-xs text-muted-foreground">Abrir</span>
-                </Button>
-              </>
-            ) : outcome.opened === false && outcome.reason === "no-valid-pix-destination" ? (
-              <p className="text-sm text-muted-foreground">
-                Contêiner nativo detectado, mas o PIX não tem um provedor de pagamento que forneça
-                ação e destino válidos do banco para abrir o app correto.
-              </p>
-            ) : platform === "android" ? (
-              <p className="text-sm text-muted-foreground">
-                Você está no navegador do Android. O Android não disponibiliza a páginas web um
-                seletor nativo de aplicativos de PIX — só aplicativos nativos têm acesso a essa
-                escolha. Para habilitá-la, o CompensAI precisa rodar como aplicativo nativo (ex.:
-                empacotado com Capacitor) e/ou usar um provedor de pagamento que forneça o destino
-                do banco.
-              </p>
-            ) : platform === "ios" ? (
-              <p className="text-sm text-muted-foreground">
-                Você está no navegador do iPhone/Safari. O iOS não expõe a páginas web um seletor de
-                apps de PIX. Para abrir o app do banco de forma nativa, o CompensAI precisa rodar
-                como aplicativo nativo (Universal Links) com um destino de cobrança real de um
-                provedor de pagamento.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                No navegador de desktop não há seletor de apps. Abra o app do seu banco no celular e
-                faça o PIX por lá — depois volte para registrar aqui.
-              </p>
-            )}
-            {!isNativeAvailable && (
-              <p className="text-xs text-muted-foreground">{platformHint()}</p>
-            )}
+            <ul className="space-y-2">
+              {BANK_APPS.map((bank) => (
+                <li key={bank.id}>
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenBank(bank)}
+                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-card/40 px-3 py-2.5 text-left transition-colors hover:bg-accent/10 active:scale-[0.99]"
+                  >
+                    <img
+                      src={bank.icon}
+                      alt=""
+                      width={32}
+                      height={32}
+                      loading="lazy"
+                      className="size-8 shrink-0 rounded-md object-contain"
+                    />
+                    <span className="flex-1 text-sm font-medium">{bank.name}</span>
+                    <span className="text-xs text-muted-foreground">Abrir</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {!isNative && <p className="text-xs text-muted-foreground">{platformHint(platform)}</p>}
 
             <Button className="w-full" onClick={() => setStep("ask")}>
               <Group>
