@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { supabase } from "@/integrations/supabase/client";
 import {
   useActiveList,
   useListItems,
@@ -15,7 +14,9 @@ import {
   listTotals,
 } from "@/hooks/useList";
 import { useProfile } from "@/hooks/useProfile";
+import { usePurchase } from "@/hooks/usePurchase";
 import { brl, UNITS } from "@/lib/compensai";
+import { lineSavings } from "@/lib/savings";
 import { PhotoAdd } from "@/components/PhotoAdd";
 
 function NameEdit({
@@ -58,7 +59,6 @@ function NameEdit({
     </button>
   );
 }
-import { useQueryClient } from "@tanstack/react-query";
 
 const QUICK_PRODUCTS = [
   "Arroz", "Feijão", "Óleo de soja", "Açúcar", "Café", "Leite", "Pão", "Ovos",
@@ -84,7 +84,6 @@ export const Route = createFileRoute("/_authenticated/lista")({
 });
 
 function ListaPage() {
-  const qc = useQueryClient();
   const { data: profile } = useProfile();
   const { data: list } = useActiveList();
   const { data: items = [] } = useListItems(list?.id);
@@ -92,6 +91,7 @@ function ListaPage() {
   const { clearAll, saveList, renameList, loadList, deleteList } = useListMutations(list?.id);
   const { data: savedLists = [] } = useSavedLists();
   const totals = listTotals(items);
+  const { confirm } = usePurchase(list?.id, items);
 
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
@@ -185,40 +185,19 @@ function ListaPage() {
     );
   }
 
-  async function finishPurchase() {
-    if (!list) return;
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth.user) return;
-    const { data: session, error } = await supabase
-      .from("shopping_sessions")
-      .insert({
-        user_id: auth.user.id,
-        list_id: list.id,
-        budget: profile?.budget ?? null,
-        total_spent: totals.spent,
-        items_count: totals.checkedCount,
-        promotions_used: items.filter((i) => i.checked && i.reference_price).length,
-        status: "finished",
-        finished_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-    if (error) {
-      toast.error("Não foi possível finalizar a compra.");
-      return;
-    }
-    await supabase.from("savings_records").insert({
-      user_id: auth.user.id,
-      session_id: session.id,
-      real_savings: totals.realSavings,
-      potential_savings: totals.potentialSavings,
+  function finishPurchase() {
+    confirm.mutate(undefined, {
+      onSuccess: (res) => {
+        toast.success(
+          res.summary.savingTotal > 0
+            ? `🛒 Compra concluída — ${brl(res.summary.paidTotal)} gastos e ${brl(res.summary.savingTotal)} economizados.`
+            : `🛒 Compra concluída — ${brl(res.summary.paidTotal)} gastos.`,
+        );
+        setBuyMode(false);
+      },
+      onError: (e) =>
+        toast.error(e instanceof Error ? e.message : "Não foi possível finalizar a compra."),
     });
-    await supabase.from("shopping_lists").update({ status: "finished" }).eq("id", list.id);
-    qc.invalidateQueries();
-    toast.success(
-      `🛒 Compra concluída — ${brl(totals.spent)} gastos e ${brl(totals.realSavings)} economizados.`,
-    );
-    setBuyMode(false);
   }
 
   const budget = profile?.budget ?? null;
@@ -431,7 +410,9 @@ function ListaPage() {
       )}
 
       <ul className="space-y-2">
-        {items.map((item) => (
+        {items.map((item) => {
+          const saving = lineSavings(item);
+          return (
           <li key={item.id} className="glass flex flex-wrap items-center gap-3 p-3">
             <Checkbox
               checked={item.checked}
@@ -449,6 +430,14 @@ function ListaPage() {
                 {item.package_size ? ` de ${item.package_size} ${item.package_unit}` : ""}
                 {item.price > 0 ? ` · ${brl(item.quantity * item.price)}` : ""}
               </p>
+              {saving.saving > 0 && (
+                <p className="text-xs text-success">economia {brl(saving.saving)}</p>
+              )}
+              {saving.overpay > 0 && (
+                <p className="text-xs text-destructive">
+                  acima da referência {brl(saving.overpay)}
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-1">
               <QtyStepper
@@ -472,7 +461,8 @@ function ListaPage() {
               <Trash2 className="size-4 text-muted-foreground" />
             </button>
           </li>
-        ))}
+          );
+        })}
         {items.length === 0 && (
           <li className="text-sm text-muted-foreground">Sua lista está vazia.</li>
         )}

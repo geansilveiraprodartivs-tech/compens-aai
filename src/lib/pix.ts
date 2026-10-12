@@ -214,7 +214,7 @@ export async function openBankApp(bank: BankApp): Promise<OpenBankResult> {
   try {
     return await handle.api.openConfiguredBank({
       androidPackage: bank.androidPackage,
-      iosScheme: bank.iosScheme,
+      ...(bank.iosScheme ? { iosScheme: bank.iosScheme } : {}),
     });
   } catch (err) {
     return {
