@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, RotateCcw, ShieldCheck, Smartphone, Wallet, XCircle } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, RotateCcw, ShieldCheck, Smartphone, Wallet, X, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,19 @@ export const Route = createFileRoute("/_authenticated/pix")({
 
 type Payment = { id: string; status: string; created_at: string; paid_at: string | null };
 
+/** Bancos que o usuário removeu da lista (persistido no aparelho). */
+const HIDDEN_BANKS_KEY = "compensai.hiddenBanks.v1";
+
+function loadHiddenBanks(): string[] {
+  try {
+    const raw = localStorage.getItem(HIDDEN_BANKS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Ícone + texto como um único grupo centralizado (ícone e legenda na mesma linha). */
 function Group({ children }: { children: React.ReactNode }) {
   return (
@@ -39,9 +52,15 @@ function PagarCompra() {
   const qc = useQueryClient();
   const [step, setStep] = useState<"start" | "info" | "ask">("start");
   const [current, setCurrent] = useState<string | null>(null);
+  const [hidden, setHidden] = useState<string[]>([]);
+
+  useEffect(() => {
+    setHidden(loadHiddenBanks());
+  }, []);
 
   const platform = getPlatform();
   const isNative = isNativeContainer();
+  const visibleBanks = BANK_APPS.filter((b) => !hidden.includes(b.id));
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -99,6 +118,25 @@ function PagarCompra() {
     );
   }
 
+  function persistHidden(next: string[]) {
+    setHidden(next);
+    try {
+      localStorage.setItem(HIDDEN_BANKS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function hideBank(id: string) {
+    persistHidden(Array.from(new Set([...hidden, id])));
+    toast.info("Banco removido da sua lista.");
+  }
+
+  function restoreBanks() {
+    persistHidden([]);
+    toast.success("Bancos removidos foram restaurados.");
+  }
+
   async function answer(paid: boolean) {
     if (!current) return;
     await supabase
@@ -149,28 +187,60 @@ function PagarCompra() {
               para registrar o pagamento.
             </p>
 
-            <ul className="space-y-2">
-              {BANK_APPS.map((bank) => (
-                <li key={bank.id}>
-                  <button
-                    type="button"
-                    onClick={() => void handleOpenBank(bank)}
-                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-card/40 px-3 py-2.5 text-left transition-colors hover:bg-accent/10 active:scale-[0.99]"
-                  >
-                    <img
-                      src={bank.icon}
-                      alt=""
-                      width={32}
-                      height={32}
-                      loading="lazy"
-                      className="size-8 shrink-0 rounded-md object-contain"
-                    />
-                    <span className="flex-1 text-sm font-medium">{bank.name}</span>
-                    <span className="text-xs text-muted-foreground">Abrir</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {visibleBanks.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Você removeu todos os bancos da sua lista. Use “Restaurar” abaixo para trazê-los de
+                volta.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {visibleBanks.map((bank) => (
+                  <li key={bank.id} className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenBank(bank)}
+                      className="flex h-11 flex-1 items-center gap-3 rounded-lg border border-border bg-card/40 px-3 text-left transition-colors hover:bg-accent/10 active:scale-[0.99]"
+                    >
+                      <img
+                        src={bank.icon}
+                        alt=""
+                        width={32}
+                        height={32}
+                        loading="lazy"
+                        className="size-8 shrink-0 rounded-md object-contain"
+                      />
+                      <span className="flex-1 text-sm font-medium">{bank.name}</span>
+                      <span className="text-xs text-muted-foreground">Abrir</span>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-11 w-11 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => hideBank(bank.id)}
+                      aria-label={`Remover ${bank.name} da lista`}
+                      title="Remover da minha lista"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {hidden.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                onClick={() => restoreBanks()}
+              >
+                <Group>
+                  <RotateCcw className="size-3.5 shrink-0" />
+                  <span>Restaurar bancos removidos ({hidden.length})</span>
+                </Group>
+              </Button>
+            )}
 
             {!isNative && <p className="text-xs text-muted-foreground">{platformHint(platform)}</p>}
 
