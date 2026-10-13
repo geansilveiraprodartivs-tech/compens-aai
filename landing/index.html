@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CompensAI — baixar o app (Android)</title>
+<meta name="description" content="Monte sua lista, compare preços, pague pelo app do seu banco e veja quanto economizou. Baixe o CompensAI para Android." />
+<meta name="theme-color" content="#05130d" />
+<link rel="icon" href="./icon.png" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="CompensAI — baixar o app (Android)" />
+<meta property="og:description" content="Lista de compras, comparação de preços, pagamento pelo seu banco e sua economia. Baixe para Android." />
+<meta property="og:image" content="https://compensai.pages.dev/icon.png" />
+<meta name="twitter:card" content="summary" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: oklch(0.19 0.018 170);
+    --bg2: oklch(0.205 0.025 170);
+    --card: oklch(0.235 0.022 166);
+    --card2: oklch(0.205 0.022 170);
+    --fg: oklch(0.98 0.006 170);
+    --muted: oklch(0.72 0.025 166);
+    --primary: oklch(0.79 0.17 160);
+    --accent: oklch(0.87 0.13 164);
+    --border: oklch(0.43 0.045 166 / 45%);
+    --radius: 1.1rem;
+    --gradient-brand: linear-gradient(135deg, oklch(0.79 0.17 160), oklch(0.87 0.13 164));
+    --glow-brand: 0 0 0 1px oklch(0.79 0.17 160 / 22%), 0 18px 45px -24px oklch(0.79 0.17 160 / 48%);
+    --font-display: "Sora", system-ui, sans-serif;
+    --font-sans: "Manrope", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--fg);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1100px 620px at 12% -8%, oklch(0.79 0.17 160 / 16%), transparent 60%),
+      radial-gradient(900px 560px at 100% 0%, oklch(0.87 0.13 164 / 12%), transparent 55%),
+      linear-gradient(160deg, var(--bg2), var(--bg) 62%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+  h1, h2, h3 { font-family: var(--font-display); line-height: 1.12; margin: 0; letter-spacing: -0.01em; }
+  p { margin: 0; color: var(--muted); }
+  a { color: inherit; text-decoration: none; }
+  .wrap { width: 100%; max-width: 1060px; margin: 0 auto; padding: 0 22px; }
+  .glass {
+    background-image: linear-gradient(160deg, oklch(0.255 0.03 166 / 94%), oklch(0.205 0.022 170 / 96%));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    backdrop-filter: blur(14px);
+  }
+  .brandtext {
+    background-image: var(--gradient-brand);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+
+  /* Header */
+  header.top { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px);
+    background: linear-gradient(180deg, oklch(0.19 0.018 170 / 85%), oklch(0.19 0.018 170 / 45%));
+    border-bottom: 1px solid var(--border); }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .logo { display: flex; align-items: center; gap: 12px; font-family: var(--font-display); font-weight: 800; font-size: 18px; }
+  .logo img { width: 34px; height: 34px; border-radius: 10px; box-shadow: var(--glow-brand); }
+  .top a.mini { font-size: 14px; font-weight: 600; color: var(--fg); opacity: .85; }
+  .top a.mini:hover { opacity: 1; color: var(--accent); }
+
+  /* Hero */
+  .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 44px; align-items: center; padding: 74px 0 58px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 13px; border-radius: 999px;
+    border: 1px solid var(--border); background: oklch(0.26 0.03 166 / 60%); color: var(--accent);
+    font-size: 12.5px; font-weight: 600; letter-spacing: .02em; }
+  .hero h1 { font-size: clamp(32px, 5.4vw, 56px); font-weight: 800; margin: 20px 0 16px; }
+  .hero .sub { font-size: clamp(16px, 2vw, 19px); max-width: 30ch; color: var(--muted); }
+  .cta { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 30px; }
+  .btn-dl {
+    display: inline-flex; align-items: center; gap: 12px; padding: 15px 26px; border-radius: 14px;
+    background-image: var(--gradient-brand); color: oklch(0.19 0.018 170);
+    font-family: var(--font-display); font-weight: 700; font-size: 16.5px; box-shadow: var(--glow-brand);
+    transition: transform .15s ease, filter .15s ease;
+  }
+  .btn-dl:hover { transform: translateY(-2px); filter: brightness(1.05); }
+  .btn-dl svg { width: 22px; height: 22px; }
+  .meta { font-size: 13.5px; color: var(--muted); }
+  .meta b { color: var(--fg); font-weight: 600; }
+
+  /* QR card */
+  .qr-card { padding: 22px; text-align: center; }
+  .qr-card img.qr { width: 100%; max-width: 232px; border-radius: 14px; background: #fff; padding: 10px; display: block; margin: 0 auto 14px; }
+  .qr-card .cap { font-size: 13px; color: var(--muted); }
+  .qr-card .cap b { color: var(--accent); }
+
+  /* Features */
+  section.block { padding: 34px 0; }
+  .sec-title { font-size: clamp(22px, 3vw, 30px); font-weight: 700; margin-bottom: 26px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .feat { padding: 22px 20px; }
+  .feat .ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 14px;
+    background: oklch(0.79 0.17 160 / 14%); border: 1px solid var(--border); color: var(--accent); }
+  .feat .ico svg { width: 22px; height: 22px; }
+  .feat h3 { font-size: 16.5px; margin-bottom: 6px; }
+  .feat p { font-size: 14px; }
+
+  /* Steps */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .step { padding: 22px 20px; position: relative; }
+  .step .n { font-family: var(--font-display); font-weight: 800; font-size: 15px; width: 30px; height: 30px; border-radius: 999px;
+    display: grid; place-items: center; background-image: var(--gradient-brand); color: oklch(0.19 0.018 170); margin-bottom: 12px; }
+  .step h3 { font-size: 16px; margin-bottom: 6px; }
+  .step p { font-size: 14px; }
+  .note { margin-top: 18px; padding: 15px 18px; font-size: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .note svg { width: 20px; height: 20px; color: var(--accent); flex: none; margin-top: 2px; }
+  .note span b { color: var(--fg); }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 30px 0 46px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 14px; justify-content: space-between; align-items: center; font-size: 13.5px; color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; gap: 34px; padding: 48px 0 40px; }
+    .hero .sub { max-width: none; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .steps { grid-template-columns: 1fr; }
+    .qr-card { max-width: 320px; }
+  }
+  @media (max-width: 460px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="logo"><img src="./icon.png" alt="CompensAI" />Compens<span class="brandtext">AI</span></div>
+      <a class="mini" href="https://github.com/geansilveiraprodartivs-tech/compens-aai/releases/latest">Versões</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <div>
+        <span class="pill">● Gratuito · Android</span>
+        <h1>Compre melhor, pague no seu banco e veja <span class="brandtext">quanto você economizou</span>.</h1>
+        <p class="sub">Monte a lista, compare preços, pague pelo app do seu banco e acompanhe sua economia a cada compra.</p>
+        <div class="cta">
+          <a class="btn-dl" href="https://github.com/geansilveiraprodartivs-tech/compens-aai/releases/download/v1.0.0/CompensAI-1.0.0.apk">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Baixar para Android
+          </a>
+          <div class="meta"><b>Versão 1.0.0</b> · ~3,7 MB<br />Android 6 ou superior</div>
+        </div>
+      </div>
+
+      <div class="qr-card glass">
+        <img class="qr" src="./qr.png" alt="QR code para baixar o CompensAI" />
+        <p class="cap">Aponte a câmera do celular<br />para <b>abrir no seu aparelho</b></p>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="sec-title">Tudo em um só app</h2>
+      <div class="grid">
+        <div class="feat glass">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="m4 6 1 1 2-2"/><path d="m4 12 1 1 2-2"/><path d="m4 18 1 1 2-2"/></svg></div>
+          <h3>Lista de compras</h3>
+          <p>Organize o que precisa comprar e leve direto para o mercado.</p>
+        </div>
+        <div class="feat glass">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 3 3 4-5"/></svg></div>
+          <h3>Comparar preços</h3>
+          <p>Registre referências e descubra onde o mesmo produto sai mais barato.</p>
+        </div>
+        <div class="feat glass">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20"/></svg></div>
+          <h3>Pague pelo seu banco</h3>
+          <p>O app abre o banco ou carteira instalados no seu celular para pagar.</p>
+        </div>
+        <div class="feat glass">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5.5c0 2-2.2 3-5 3s-5 1-5 3 2.2 3 5 3 5 1 5 3-2.2 3-5 3"/></svg></div>
+          <h3>Sua economia</h3>
+          <p>Veja quanto você economizou na compra aberta e no acumulado.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2 class="sec-title">Como instalar</h2>
+      <div class="steps">
+        <div class="step glass">
+          <div class="n">1</div>
+          <h3>Baixe o arquivo</h3>
+          <p>Toque em “Baixar para Android” ou abra o link pelo QR code.</p>
+        </div>
+        <div class="step glass">
+          <div class="n">2</div>
+          <h3>Abra e instale</h3>
+          <p>Toque no arquivo <b>CompensAI-1.0.0.apk</b> baixado e confirme a instalação.</p>
+        </div>
+        <div class="step glass">
+          <div class="n">3</div>
+          <h3>Entre no app</h3>
+          <p>Abra o CompensAI e faça login com sua conta.</p>
+        </div>
+      </div>
+      <div class="note glass">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>
+        <span>Se aparecer o aviso do <b>Play Protect</b> (“app não reconhecido”), toque em <b>“Instalar assim mesmo”</b>. Caso o Android peça, autorize <b>“Instalar apps desconhecidos”</b> para o navegador.</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>CompensAI · v1.0.0 · Android</span>
+      <span><a href="https://github.com/geansilveiraprodartivs-tech/compens-aai/releases/latest">Ver todas as versões</a></span>
+    </div>
+  </footer>
+</body>
+</html>
