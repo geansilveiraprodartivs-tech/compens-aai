@@ -7,6 +7,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.util.Base64;
 
 import com.getcapacitor.JSArray;
@@ -342,6 +343,31 @@ public class BankAppsPlugin extends Plugin {
                 call.resolve(result);
                 return;
             }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception error) {
+            result.put("opened", false);
+            result.put("reason", error.getMessage() == null ? "failed" : error.getMessage());
+            call.resolve(result);
+        }
+    }
+
+    /**
+     * Abre uma URL externa usando o mecanismo nativo do Android (ACTION_VIEW).
+     * Serve de fallback do login quando o plugin Browser nao esta no build.
+     */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.trim().isEmpty()) {
+            call.reject("URL_REQUIRED", "URL_REQUIRED");
+            return;
+        }
+        JSObject result = new JSObject();
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(intent);
             result.put("opened", true);

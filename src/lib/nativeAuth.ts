@@ -1,4 +1,4 @@
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { supabase } from "@/integrations/supabase/client";
 
 // Deep link the native app listens for (see AndroidManifest.xml intent-filter).
@@ -21,8 +21,31 @@ export function isNativeOAuthCallback(url: string | null | undefined): boolean {
   return typeof url === "string" && url.startsWith(`${NATIVE_OAUTH_SCHEME}://`);
 }
 
+type BankAppsApi = {
+  openUrl(options: { url: string }): Promise<{ opened: boolean; reason?: string }>;
+};
+
+// Handle to the custom native plugin. Kept in a plain object because the
+// `registerPlugin` proxy is "thenable": returning it directly from an async fn
+// makes the JS engine call `.then()` (see the note in pix.ts).
+const BankApps = registerPlugin<BankAppsApi>("BankApps");
+
+/**
+ * Opens a URL using Android's own external-link mechanism (ACTION_VIEW via the
+ * native plugin). Used when the Capacitor Browser plugin is not present in the
+ * installed build, so the OAuth step still works instead of failing with
+ * "Browser plugin is not implemented on Android".
+ */
+async function openExternalUrl(url: string): Promise<boolean> {
+  try {
+    const res = await BankApps.openUrl({ url });
+    return res?.opened === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function openNativeGoogleSignIn(): Promise<void> {
-  const { Browser } = await import("@capacitor/browser");
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   const params = new URLSearchParams({
     provider: "google",
@@ -32,7 +55,19 @@ export async function openNativeGoogleSignIn(): Promise<void> {
   // Same-origin broker entry: it injects the project id and redirects to the
   // Lovable OAuth broker, which owns the Google credentials.
   const url = `${window.location.origin}/~oauth/initiate?${params.toString()}`;
-  await Browser.open({ url, presentationStyle: "fullscreen" });
+
+  try {
+    const { Browser } = await import("@capacitor/browser");
+    await Browser.open({ url, presentationStyle: "fullscreen" });
+    return;
+  } catch {
+    // Browser plugin not available in this build — fall through to the native opener.
+  }
+
+  const opened = await openExternalUrl(url);
+  if (!opened) {
+    throw new Error("Não foi possível abrir o navegador para o login com o Google.");
+  }
 }
 
 export async function closeNativeOAuthBrowser(): Promise<void> {
