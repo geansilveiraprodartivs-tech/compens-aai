@@ -33,7 +33,15 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Mode = "signin" | "reset";
+type Mode = "signin" | "signup" | "reset";
+
+function friendlyAuthError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  if (/signups?\s+not\s+allowed|signup_disabled|signups?\s+are\s+disabled/i.test(message)) {
+    return "O cadastro está desativado neste momento. Fale com o suporte pelo WhatsApp para criar sua conta.";
+  }
+  return message || "Não foi possível continuar";
+}
 
 function AuthPage() {
   const navigate = useNavigate();
@@ -69,7 +77,7 @@ function AuthPage() {
         await completeNativeGoogleSignIn(url);
         navigate({ to: "/app", replace: true });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Não foi possível entrar com o Google");
+        toast.error(friendlyAuthError(err));
         setLoading(false);
       }
     };
@@ -103,11 +111,26 @@ function AuthPage() {
         setMode("signin");
         return;
       }
+      if (mode === "signup") {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: `${window.location.origin}/app` },
+        });
+        if (error) throw error;
+        if (data.session) {
+          navigate({ to: "/app", replace: true });
+          return;
+        }
+        toast.success("Conta criada! Confirme o cadastro pelo link enviado no seu e-mail.");
+        setMode("signin");
+        return;
+      }
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       navigate({ to: "/app", replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível continuar");
+      toast.error(friendlyAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -118,13 +141,13 @@ function AuthPage() {
     try {
       await openNativeGoogleSignIn();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Não foi possível entrar com o Google");
+      toast.error(friendlyAuthError(err));
     } finally {
       setLoading(false);
     }
   }
 
-  const title = mode === "reset" ? "Recuperar senha" : "Entrar";
+  const title = mode === "reset" ? "Recuperar senha" : mode === "signup" ? "Criar conta" : "Entrar";
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-5 py-10">
@@ -174,11 +197,17 @@ function AuthPage() {
             </div>
           )}
           <Button type="submit" disabled={loading} className="w-full gradient-brand glow">
-            {loading ? "Aguarde..." : mode === "reset" ? "Enviar link" : "Entrar"}
+            {loading
+              ? "Aguarde..."
+              : mode === "reset"
+                ? "Enviar link"
+                : mode === "signup"
+                  ? "Criar conta"
+                  : "Entrar"}
           </Button>
         </form>
 
-        {mode === "signin" && (
+        {mode !== "reset" && (
           <>
             <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
               <span className="h-px flex-1 bg-border" />
@@ -242,8 +271,26 @@ function AuthPage() {
               Voltar ao login
             </button>
           </div>
+        ) : mode === "signup" ? (
+          <div className="mt-4 text-center text-xs text-muted-foreground">
+            Já tem conta?{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground"
+              onClick={() => setMode("signin")}
+            >
+              Entrar
+            </button>
+          </div>
         ) : (
-          <div className="mt-4 flex justify-end text-xs text-muted-foreground">
+          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="font-medium text-foreground"
+              onClick={() => setMode("signup")}
+            >
+              Criar conta
+            </button>
             <button type="button" onClick={() => setMode("reset")}>
               Esqueci a senha
             </button>
