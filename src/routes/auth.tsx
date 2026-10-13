@@ -2,8 +2,13 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
 import { isNativeContainer } from "@/lib/pix";
+import {
+  closeNativeOAuthBrowser,
+  completeNativeGoogleSignIn,
+  isNativeOAuthCallback,
+  openNativeGoogleSignIn,
+} from "@/lib/nativeAuth";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +52,42 @@ function AuthPage() {
     });
   }, [navigate]);
 
+  useEffect(() => {
+    if (!isNative) return;
+    let cancelled = false;
+    let removeListener: (() => void) | undefined;
+    const handled = new Set<string>();
+
+    const handleCallback = async (url: string) => {
+      if (!isNativeOAuthCallback(url) || handled.has(url)) return;
+      handled.add(url);
+      setLoading(true);
+      await closeNativeOAuthBrowser();
+      try {
+        await completeNativeGoogleSignIn(url);
+        navigate({ to: "/app", replace: true });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Não foi possível entrar com o Google");
+        setLoading(false);
+      }
+    };
+
+    import("@capacitor/app").then(async ({ App }) => {
+      if (cancelled) return;
+      const listener = await App.addListener("appUrlOpen", ({ url }) => {
+        void handleCallback(url);
+      });
+      removeListener = () => void listener.remove();
+      const launch = await App.getLaunchUrl();
+      if (launch?.url) void handleCallback(launch.url);
+    });
+
+    return () => {
+      cancelled = true;
+      removeListener?.();
+    };
+  }, [isNative, navigate]);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -73,12 +114,7 @@ function AuthPage() {
   async function signInGoogle() {
     setLoading(true);
     try {
-      const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: `${window.location.origin}/app`,
-      });
-      if (result.error) throw result.error;
-      if (result.redirected) return;
-      navigate({ to: "/app", replace: true });
+      await openNativeGoogleSignIn();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível entrar com o Google");
     } finally {
