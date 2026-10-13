@@ -2,11 +2,11 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { isNativeContainer } from "@/lib/pix";
 import {
   closeNativeOAuthBrowser,
   completeNativeGoogleSignIn,
   isNativeOAuthCallback,
+  isNativePlatform,
   openNativeGoogleSignIn,
 } from "@/lib/nativeAuth";
 import { Brand } from "@/components/Brand";
@@ -43,7 +43,7 @@ function AuthPage() {
   const [isNative, setIsNative] = useState(false);
 
   useEffect(() => {
-    setIsNative(isNativeContainer());
+    setIsNative(isNativePlatform());
   }, []);
 
   useEffect(() => {

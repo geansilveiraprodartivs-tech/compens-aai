@@ -174,14 +174,18 @@ export function getPlatform(): DevicePlatform {
  */
 export function isNativeContainer(): boolean {
   if (typeof window === "undefined") return false;
-  const w = window as Window & {
-    Capacitor?: { isNativePlatform?: boolean; Plugins?: unknown };
-    plugins?: unknown;
-    Android?: unknown;
-    webkit?: { messageHandlers?: Record<string, unknown> };
-  };
-  if (w.Capacitor?.isNativePlatform ?? w.Capacitor) return true;
-  if (w.plugins || w.Android || w.webkit?.messageHandlers) return true;
+  const cap = (
+    window as Window & {
+      Capacitor?: {
+        isNativePlatform?: boolean | (() => boolean);
+        getPlatform?: () => string;
+      };
+    }
+  ).Capacitor;
+  if (!cap) return false;
+  if (typeof cap.isNativePlatform === "function") return cap.isNativePlatform() === true;
+  if (typeof cap.isNativePlatform === "boolean") return cap.isNativePlatform;
+  if (typeof cap.getPlatform === "function") return cap.getPlatform() !== "web";
   return false;
 }
 
