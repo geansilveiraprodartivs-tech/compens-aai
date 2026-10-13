@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
+import { isNativeContainer } from "@/lib/pix";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,11 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isNative, setIsNative] = useState(false);
+
+  useEffect(() => {
+    setIsNative(isNativeContainer());
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -55,6 +61,11 @@ function AuthPage() {
         return;
       }
       if (mode === "signup") {
+        if (!isNative) {
+          toast.error("A criação de conta é feita pelo app CompensAI.");
+          setMode("signin");
+          return;
+        }
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -146,7 +157,7 @@ function AuthPage() {
           </Button>
         </form>
 
-        {mode !== "reset" && (
+        {isNative && mode !== "reset" && (
           <>
             <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
               <span className="h-px flex-1 bg-border" />
@@ -189,7 +200,7 @@ function AuthPage() {
               Voltar ao login
             </button>
           </div>
-        ) : (
+        ) : isNative ? (
           <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
             <button
               type="button"
@@ -203,6 +214,23 @@ function AuthPage() {
                 Esqueci a senha
               </button>
             )}
+          </div>
+        ) : (
+          <div className="mt-4 text-xs text-muted-foreground">
+            <p className="text-center">A criação de conta é feita pelo app CompensAI.</p>
+            <div className="mt-2 flex items-center justify-between">
+              <a
+                href="https://compensai.pages.dev"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-primary"
+              >
+                Baixar o app
+              </a>
+              <button type="button" onClick={() => setMode("reset")}>
+                Esqueci a senha
+              </button>
+            </div>
           </div>
         )}
       </div>
