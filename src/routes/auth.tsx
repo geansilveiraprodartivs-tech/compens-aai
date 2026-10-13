@@ -218,15 +218,7 @@ function AuthPage() {
         ) : (
           <div className="mt-4 text-xs text-muted-foreground">
             <p className="text-center">A criação de conta é feita pelo app CompensAI.</p>
-            <div className="mt-2 flex items-center justify-between">
-              <a
-                href="https://compensai.pages.dev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-semibold text-primary"
-              >
-                Baixar o app
-              </a>
+            <div className="mt-2 flex justify-end">
               <button type="button" onClick={() => setMode("reset")}>
                 Esqueci a senha
               </button>
