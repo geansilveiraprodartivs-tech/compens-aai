@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Concluindo login — CompensAI</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #0b1220;
+        color: #e8eef7;
+        text-align: center;
+        padding: 24px;
+      }
+      main {
+        max-width: 22rem;
+      }
+      a {
+        color: #34d399;
+        font-weight: 600;
+      }
+    </style>
+    <title>Concluindo login — CompensAI</title>
+  </head>
+  <body>
+    <main>
+      <p id="msg">Concluindo o login…</p>
+      <p>
+        <a id="open" href="#">Toque aqui para voltar ao CompensAI</a>
+      </p>
+    </main>
+    <script>
+      (function () {
+        var deepLink =
+          "br.com.compensai://oauth-callback" + window.location.search + window.location.hash;
+        document.getElementById("open").setAttribute("href", deepLink);
+        var go = function () {
+          try {
+            window.location.replace(deepLink);
+          } catch (e) {
+            /* ignore */
+          }
+        };
+        // Hand the session back to the app (server redirect lands here).
+        go();
+        setTimeout(go, 500);
+        // If the app did not take over, offer a manual tap (user gesture always works).
+        setTimeout(function () {
+          document.getElementById("msg").textContent =
+            "Não abriu automaticamente? Toque no botão abaixo para concluir o login.";
+        }, 1800);
+      })();
+    </script>
+  </body>
+</html>

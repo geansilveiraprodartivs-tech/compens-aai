@@ -1,9 +1,17 @@
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/integrations/supabase/client";
 
+// Deep link the native app listens for (see AndroidManifest.xml intent-filter).
 export const NATIVE_OAUTH_SCHEME = "br.com.compensai";
-export const NATIVE_OAUTH_HOST = "oauth-callback";
-export const NATIVE_OAUTH_REDIRECT = `${NATIVE_OAUTH_SCHEME}://${NATIVE_OAUTH_HOST}`;
+export const NATIVE_OAUTH_REDIRECT = `${NATIVE_OAUTH_SCHEME}://oauth-callback`;
+
+// Static page on the app's own origin that forwards the broker session to the
+// deep link. Required because the Lovable OAuth broker (the only provider with
+// Google credentials for this Lovable Cloud project) only allows https redirect
+// URIs on the project origin — never a custom scheme.
+function oauthCallbackPageUrl(): string {
+  return `${window.location.origin}/oauth-callback.html`;
+}
 
 export function isNativePlatform(): boolean {
   return Capacitor.isNativePlatform();
@@ -15,17 +23,16 @@ export function isNativeOAuthCallback(url: string | null | undefined): boolean {
 
 export async function openNativeGoogleSignIn(): Promise<void> {
   const { Browser } = await import("@capacitor/browser");
-  const { data, error } = await supabase.auth.signInWithOAuth({
+  const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const params = new URLSearchParams({
     provider: "google",
-    options: {
-      redirectTo: NATIVE_OAUTH_REDIRECT,
-      skipBrowserRedirect: true,
-      queryParams: { prompt: "select_account" },
-    },
+    redirect_uri: oauthCallbackPageUrl(),
+    state,
   });
-  if (error) throw error;
-  if (!data?.url) throw new Error("Não foi possível iniciar o login com o Google.");
-  await Browser.open({ url: data.url, presentationStyle: "fullscreen" });
+  // Same-origin broker entry: it injects the project id and redirects to the
+  // Lovable OAuth broker, which owns the Google credentials.
+  const url = `${window.location.origin}/~oauth/initiate?${params.toString()}`;
+  await Browser.open({ url, presentationStyle: "fullscreen" });
 }
 
 export async function closeNativeOAuthBrowser(): Promise<void> {
