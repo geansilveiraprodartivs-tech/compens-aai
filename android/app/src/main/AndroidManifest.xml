@@ -70,6 +70,15 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
 
+        <!--
+          Reconhecimento de voz (SpeechRecognizer). Sem esta consulta, apps com
+          targetSdk 30+ não "enxergam" o serviço de voz instalado no aparelho
+          (Android 11+), e isRecognitionAvailable() devolveria false.
+        -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+
         <package android:name="com.nu.production" />
         <package android:name="br.com.gabba.Caixa" />
         <package android:name="br.gov.caixa.tem" />
