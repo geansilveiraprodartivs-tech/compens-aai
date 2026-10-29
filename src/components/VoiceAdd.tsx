@@ -1,10 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, Loader2, Mic, MicOff, RotateCcw, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Loader2,
+  Mic,
+  MicOff,
+  RotateCcw,
+  Settings,
+  Trash2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { UNITS } from "@/lib/compensai";
 import { parseVoiceProducts, productKey, type VoiceDraft } from "@/lib/voiceList";
+import {
+  createSpeechEngine,
+  isNativeSpeech,
+  isSpeechSupported,
+  type SpeechEngine,
+} from "@/lib/speechEngine";
 
 type AddFn = (item: {
   name: string;
@@ -15,43 +31,21 @@ type AddFn = (item: {
 
 type Draft = VoiceDraft & { id: string };
 
-/** Tipos mínimos da Web Speech API (não faz parte do lib.dom). */
-type RecognitionResult = { isFinal: boolean; readonly 0: { transcript: string } };
-type RecognitionEvent = { resultIndex: number; results: ArrayLike<RecognitionResult> };
-type RecognitionError = { error: string };
-type Recognition = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onstart: (() => void) | null;
-  onresult: ((event: RecognitionEvent) => void) | null;
-  onerror: ((event: RecognitionError) => void) | null;
-  onend: (() => void) | null;
-};
-type RecognitionCtor = new () => Recognition;
-type WindowWithSpeech = Window & {
-  SpeechRecognition?: RecognitionCtor;
-  webkitSpeechRecognition?: RecognitionCtor;
-};
-
-function speechCtor(): RecognitionCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as WindowWithSpeech;
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
-}
+const UNSUPPORTED_MESSAGE =
+  "Reconhecimento de voz não está disponível neste aparelho. Use as opções de texto ou foto.";
 
 const FRIENDLY_ERRORS: Record<string, string> = {
   "not-allowed":
-    "Permissão do microfone negada. Libere o microfone nas configurações do navegador e tente de novo.",
+    "Permissão do microfone negada. Libere o microfone nas configurações e tente de novo.",
   "service-not-allowed":
-    "Permissão do microfone negada. Libere o microfone nas configurações do navegador e tente de novo.",
+    "Permissão do microfone negada. Libere o microfone nas configurações e tente de novo.",
   "no-speech": "Não ouvi nada. Tente falar mais perto do microfone.",
   "audio-capture": "Nenhum microfone foi encontrado no aparelho.",
   network: "Falha de rede no reconhecimento de voz. Verifique a conexão e tente de novo.",
+  unavailable:
+    "Este aparelho não tem um serviço de reconhecimento de voz instalado. Use as opções de texto ou foto.",
+  busy: "O microfone está ocupado por outro aplicativo. Feche-o e tente de novo.",
+  "start-failed": "Não foi possível iniciar o microfone. Tente novamente.",
 };
 
 let sequence = 0;
@@ -103,8 +97,9 @@ export function VoiceAdd({
   const [liveText, setLiveText] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [canOpenSettings, setCanOpenSettings] = useState(false);
   const [saving, setSaving] = useState(false);
-  const recRef = useRef<Recognition | null>(null);
+  const engineRef = useRef<SpeechEngine | null>(null);
   const finalRef = useRef("");
   const chunksRef = useRef<string[]>([]);
 
@@ -115,10 +110,16 @@ export function VoiceAdd({
 
   useEffect(() => {
     return () => {
-      recRef.current?.abort();
-      recRef.current = null;
+      engineRef.current?.dispose();
+      engineRef.current = null;
     };
   }, []);
+
+  /** Engine de voz: plugin nativo no APK, Web Speech API no navegador. */
+  function engine(): SpeechEngine | null {
+    if (!engineRef.current) engineRef.current = createSpeechEngine();
+    return engineRef.current;
+  }
 
   function mergeDrafts(parsed: VoiceDraft[]) {
     setDrafts((prev) => {
@@ -161,91 +162,69 @@ export function VoiceAdd({
   }
 
   function startListening() {
-    const Ctor = speechCtor();
-    if (!Ctor) {
-      toast.error(
-        "Reconhecimento de voz não está disponível neste navegador. Use as opções de texto ou foto.",
-      );
+    const speech = engine();
+    if (!speech) {
+      toast.error(UNSUPPORTED_MESSAGE);
       return;
     }
 
-    recRef.current?.abort();
+    speech.abort();
     finalRef.current = "";
     chunksRef.current = [];
     setLiveText("");
     setError(null);
+    setCanOpenSettings(false);
 
-    const rec = new Ctor();
-    rec.lang = "pt-BR";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
-
-    rec.onstart = () => {
-      setListening(true);
-      setError(null);
-    };
-
-    rec.onresult = (event) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const result = event.results[i];
-        if (!result) continue;
-        const text = result[0]?.transcript ?? "";
-        if (result.isFinal) pushFinal(text);
-        else interim += ` ${text}`;
-      }
-      setLiveText(`${finalRef.current} ${interim}`.replace(/\s+/g, " ").trim());
-      if (finalRef.current.trim()) mergeDrafts(parseVoiceProducts(finalRef.current));
-    };
-
-    rec.onerror = (event) => {
-      setListening(false);
-      if (event.error === "aborted") return;
-      const message = FRIENDLY_ERRORS[event.error];
-      setError(message ?? "Não foi possível reconhecer a voz. Tente novamente.");
-    };
-
-    rec.onend = () => {
-      setListening(false);
-      const text = finalRef.current.trim();
-      if (!text) return;
-      const parsed = parseVoiceProducts(text);
-      if (parsed.length > 0) mergeDrafts(parsed);
-      else
-        setError(
-          "Não consegui identificar nenhum produto na fala. Tente falar o nome do produto, por exemplo: “arroz”.",
-        );
-    };
-
-    recRef.current = rec;
-    try {
-      rec.start();
-    } catch {
-      setListening(false);
-      setError("Não foi possível iniciar o microfone.");
-    }
+    speech.start({
+      onStart: () => {
+        setListening(true);
+        setError(null);
+      },
+      onPartial: (text) => {
+        setLiveText(`${finalRef.current} ${text}`.replace(/\s+/g, " ").trim());
+      },
+      onFinal: (text) => {
+        pushFinal(text);
+        setLiveText(finalRef.current);
+        if (finalRef.current.trim()) mergeDrafts(parseVoiceProducts(finalRef.current));
+      },
+      onError: (code) => {
+        setListening(false);
+        setCanOpenSettings(speech.kind === "native" && code === "not-allowed");
+        const message = FRIENDLY_ERRORS[code];
+        setError(message ?? "Não foi possível reconhecer a voz. Tente novamente.");
+      },
+      onEnd: () => {
+        setListening(false);
+        const text = finalRef.current.trim();
+        if (!text) return;
+        const parsed = parseVoiceProducts(text);
+        if (parsed.length > 0) mergeDrafts(parsed);
+        else
+          setError(
+            "Não consegui identificar nenhum produto na fala. Tente falar o nome do produto, por exemplo: “arroz”.",
+          );
+      },
+    });
   }
 
   function stopListening() {
-    recRef.current?.stop();
+    engineRef.current?.stop();
     setListening(false);
   }
 
   function close() {
-    recRef.current?.abort();
-    recRef.current = null;
+    engineRef.current?.abort();
     setListening(false);
     setSaving(false);
     setOpen(false);
+    setCanOpenSettings(false);
     resetSession();
   }
 
   function openModal() {
-    if (!speechCtor()) {
-      toast.error(
-        "Reconhecimento de voz não está disponível neste navegador. Use as opções de texto ou foto.",
-      );
+    if (!isSpeechSupported()) {
+      toast.error(UNSUPPORTED_MESSAGE);
       return;
     }
     setOpen(true);
@@ -340,8 +319,26 @@ export function VoiceAdd({
             {liveText && <p className="rounded-lg bg-secondary/50 p-2 text-sm">{liveText}</p>}
 
             {error && (
-              <p className="flex items-start gap-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {error}
+              <div className="space-y-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
+                <p className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {error}
+                </p>
+                {canOpenSettings && (
+                  <Button
+                    variant="outline"
+                    className="w-full bg-transparent"
+                    onClick={() => engineRef.current?.openSettings()}
+                  >
+                    <Settings className="mr-2 size-4" /> Abrir configurações
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {isNativeSpeech() && !error && drafts.length === 0 && !listening && (
+              <p className="text-center text-xs text-muted-foreground">
+                Na primeira vez o Android pede permissão do microfone. Depois disso ele não pergunta
+                mais.
               </p>
             )}
 

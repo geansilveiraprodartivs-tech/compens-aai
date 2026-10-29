@@ -48,6 +48,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
+      Microfone (adicionar produtos por voz).
+      RECORD_AUDIO é obrigatória: o Android exige autorização do usuário em tempo
+      de execução, pedida uma única vez na primeira vez que ele toca no microfone.
+      MODIFY_AUDIO_SETTINGS é exigida pela WebView quando o site pede captura de áudio.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+
+    <!--
       Android 11+ (API 30+) package visibility.
       A consulta <intent> abaixo permite ao plugin BankApps (listApps) ENUMERAR os
       aplicativos instalados que possuem launcher — é a descoberta real, feita pelo

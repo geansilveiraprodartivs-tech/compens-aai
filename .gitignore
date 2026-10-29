@@ -44,7 +44,11 @@ android/app/src/main/java/br/com/*
 !android/app/src/main/java/br/com/compensai
 android/app/src/main/java/br/com/compensai/*
 !android/app/src/main/java/br/com/compensai/BankAppsPlugin.java
+!android/app/src/main/java/br/com/compensai/SpeechRecognitionPlugin.java
 !android/app/src/main/java/br/com/compensai/MainActivity.java
+
+# Versão do app (versionCode/versionName) versionada para manter o build local reproduzível
+!android/app/build.gradle
 
 # Icone do launcher (versionado para sobreviver a rebuilds; gere com scripts/generate-android-icons.ps1)
 !android/app/src/main/res
