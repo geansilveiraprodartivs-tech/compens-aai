@@ -2,19 +2,19 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
-  EMPTY_NUTRIENTS,
-  buildPortion,
+  cleanText,
+  composeAnalysis,
   goalLabel,
   hasNutrition,
   nameMatchScore,
   normalizeText,
   nutrientsFromOpenFoodFacts,
   sanitizeNutrients,
-  type DataOrigin,
-  type FitVerdict,
+  unknownAnalysis,
+  type AiFoodPayload,
   type FoodAnalysis,
-  type FoodSuggestion,
   type NutritionGoal,
+  type OffMatch,
   type Nutrients,
 } from "@/lib/nutrition";
 
@@ -135,30 +135,6 @@ Sua tarefa:
 
 Nunca invente valores nutricionais. Se não souber, use null. Responda apenas o JSON.`;
 
-type AiNutrients = Record<keyof Nutrients, number | null>;
-
-type AiPayload = {
-  ok: boolean;
-  name: string;
-  brand: string | null;
-  category: string | null;
-  basis: "100 g" | "100 ml";
-  label_read: boolean;
-  barcode: string | null;
-  serving_size_text: string | null;
-  serving_grams: number | null;
-  label: AiNutrients;
-  estimate: AiNutrients;
-  ingredients: string | null;
-  benefits: string[];
-  cautions: string[];
-  verdict: FitVerdict;
-  verdict_reason: string;
-  better_choices: FoodSuggestion[];
-  balance_tips: string[];
-  problem: string | null;
-};
-
 /* ------------------------------------------------------- Open Food Facts (OFF) */
 
 const OFF_TIMEOUT_MS = 6500;
@@ -208,7 +184,7 @@ function pickOffCandidate(
   products: OffProduct[],
   name: string,
   barcode: string | null,
-): { product: OffProduct; nutrients: Nutrients } | null {
+): OffMatch | null {
   const scored = products
     .map((product) => {
       const offName = (product.product_name_pt || product.product_name || "").trim();
@@ -222,13 +198,23 @@ function pickOffCandidate(
 
   const best = scored[0];
   if (!best) return null;
-  return { product: best.product, nutrients: best.nutrients };
+  return toOffMatch(best.product, best.nutrients);
 }
 
-async function lookupOpenFoodFacts(
-  name: string,
-  barcode: string | null,
-): Promise<{ product: OffProduct; nutrients: Nutrients } | null> {
+function toOffMatch(product: OffProduct, nutrients: Nutrients): OffMatch {
+  const quantity = Number(product.serving_quantity);
+  return {
+    nutrients,
+    name: cleanText(product.product_name_pt || product.product_name, 120),
+    brands: cleanText(product.brands, 60),
+    code: cleanText(product.code, 20),
+    servingSize: cleanText(product.serving_size, 40),
+    servingQuantity: Number.isFinite(quantity) && quantity > 0 ? quantity : null,
+    ingredients: cleanText(product.ingredients_text_pt || product.ingredients_text, 600),
+  };
+}
+
+async function lookupOpenFoodFacts(name: string, barcode: string | null): Promise<OffMatch | null> {
   const digits = (barcode ?? "").replace(/\D/g, "");
   const deadline = Date.now() + OFF_TIMEOUT_MS;
   const remaining = () => deadline - Date.now();
@@ -240,7 +226,7 @@ async function lookupOpenFoodFacts(
     )) as { status?: number; product?: OffProduct } | null;
     if (data && data.status === 1 && data.product) {
       const nutrients = nutrientsFromOpenFoodFacts(data.product.nutriments ?? {});
-      if (hasNutrition(nutrients)) return { product: data.product, nutrients };
+      if (hasNutrition(nutrients)) return toOffMatch(data.product, nutrients);
     }
   }
 
@@ -262,43 +248,6 @@ async function lookupOpenFoodFacts(
   )) as { products?: OffProduct[] } | null;
   return pickOffCandidate(legacy?.products ?? [], name, digits || null);
 }
-
-/* ------------------------------------------------------------------ helpers */
-
-function str(value: unknown, max = 200): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.replace(/\s+/g, " ").trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, max);
-}
-
-function list(value: unknown, max = 4, maxLen = 220): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => str(item, maxLen))
-    .filter((item): item is string => !!item)
-    .slice(0, max);
-}
-
-function suggestions(value: unknown): FoodSuggestion[] {
-  if (!Array.isArray(value)) return [];
-  const out: FoodSuggestion[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const name = str((item as FoodSuggestion).name, 80);
-    const why = str((item as FoodSuggestion).why, 160);
-    if (name && why) out.push({ name, why });
-    if (out.length >= 3) break;
-  }
-  return out;
-}
-
-function readNutrients(value: unknown): Nutrients {
-  if (!value || typeof value !== "object") return { ...EMPTY_NUTRIENTS };
-  return sanitizeNutrients(value as Partial<Nutrients>);
-}
-
-const VERDICT_VALUES: FitVerdict[] = ["good", "balanced", "moderation", "alternative"];
 
 /** Consome o SSE do gateway e devolve o texto final. */
 async function readGatewayText(body: ReadableStream<Uint8Array>): Promise<string> {
@@ -386,9 +335,9 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
 
     const raw = await readGatewayText(res.body);
 
-    let payload: AiPayload;
+    let payload: AiFoodPayload;
     try {
-      payload = JSON.parse(raw) as AiPayload;
+      payload = JSON.parse(raw) as AiFoodPayload;
     } catch {
       return unknownAnalysis(
         "Não consegui entender o resultado da análise. Tente outra foto.",
@@ -397,131 +346,12 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
       );
     }
 
-    const name = str(payload.name, 90) ?? "";
-    if (!payload.ok || !name) {
-      return unknownAnalysis(
-        str(payload.problem, 180) ?? "Não consegui identificar o alimento nesta foto.",
-        name || null,
-        goal,
-      );
-    }
+    const name = cleanText(payload.name, 90) ?? "";
+    // A base pública só é consultada quando o rótulo não foi lido com segurança.
+    const labelOk =
+      payload.label_read === true && hasNutrition(sanitizeNutrients(payload.label ?? {}));
+    const barcode = (payload.barcode ?? "").replace(/\D/g, "") || null;
+    const off = labelOk || !name ? null : await lookupOpenFoodFacts(name, barcode);
 
-    const basis: "100 g" | "100 ml" = payload.basis === "100 ml" ? "100 ml" : "100 g";
-    const labelNutrients = readNutrients(payload.label);
-    const estimateNutrients = readNutrients(payload.estimate);
-    const barcode = str(payload.barcode, 32)?.replace(/\D/g, "") || null;
-
-    const labelOk = payload.label_read === true && hasNutrition(labelNutrients);
-
-    // Prioridade: rótulo > Open Food Facts > estimativa pela imagem.
-    let origin: DataOrigin = "unknown";
-    let per100: Nutrients = { ...EMPTY_NUTRIENTS };
-    let sourceName: string | null = null;
-    let sourceUrl: string | null = null;
-    let offProduct: OffProduct | null = null;
-
-    if (labelOk) {
-      origin = "label";
-      per100 = labelNutrients;
-    } else {
-      const off = await lookupOpenFoodFacts(name, barcode);
-      if (off) {
-        origin = "openfoodfacts";
-        per100 = off.nutrients;
-        offProduct = off.product;
-        const offName = (off.product.product_name_pt || off.product.product_name || "").trim();
-        sourceName = offName
-          ? `${offName}${off.product.brands ? ` · ${off.product.brands}` : ""}`.slice(0, 120)
-          : "Open Food Facts";
-        sourceUrl = off.product.code
-          ? `https://world.openfoodfacts.org/product/${off.product.code}`
-          : "https://world.openfoodfacts.org";
-      } else if (hasNutrition(estimateNutrients)) {
-        origin = "estimate";
-        per100 = estimateNutrients;
-      }
-    }
-
-    const servingGrams =
-      payload.serving_grams != null && Number.isFinite(payload.serving_grams)
-        ? Math.min(Math.max(payload.serving_grams, 1), 5000)
-        : offProduct?.serving_quantity != null
-          ? Number(offProduct.serving_quantity) || null
-          : null;
-
-    const servingLabel =
-      str(payload.serving_size_text, 40) ??
-      (offProduct?.serving_size ? str(offProduct.serving_size, 40) : null);
-
-    const portion = buildPortion(per100, servingGrams, servingLabel, basis);
-
-    const ingredients =
-      str(payload.ingredients, 600) ??
-      (offProduct?.ingredients_text_pt ? str(offProduct.ingredients_text_pt, 600) : null) ??
-      (offProduct?.ingredients_text ? str(offProduct.ingredients_text, 600) : null);
-
-    const verdict: FitVerdict = VERDICT_VALUES.includes(payload.verdict)
-      ? payload.verdict
-      : "balanced";
-
-    const reason =
-      str(payload.verdict_reason, 320) ??
-      (origin === "unknown"
-        ? "Sem valores nutricionais confiáveis, não dá para avaliar o encaixe no seu objetivo."
-        : "Avaliação geral considerando porção e contexto alimentar.");
-
-    return {
-      ok: true,
-      name,
-      brand: str(payload.brand, 60),
-      category: str(payload.category, 50),
-      origin,
-      goal,
-      basis,
-      per100,
-      portion,
-      ingredients,
-      benefits: list(payload.benefits, 4),
-      cautions: list(payload.cautions, 4),
-      fit: { verdict, reason },
-      better_choices: suggestions(payload.better_choices),
-      balance_tips: list(payload.balance_tips, 4),
-      source_name: sourceName,
-      source_url: sourceUrl,
-      problem:
-        origin === "unknown"
-          ? (str(payload.problem, 180) ??
-            "Não encontrei valores nutricionais confiáveis para este item.")
-          : null,
-    };
+    return composeAnalysis(payload, off, goal);
   });
-
-function unknownAnalysis(
-  problem: string,
-  name: string | null = null,
-  goal: NutritionGoal = "know",
-): FoodAnalysis {
-  return {
-    ok: false,
-    name: name ?? "",
-    brand: null,
-    category: null,
-    origin: "unknown",
-    goal,
-    basis: "100 g",
-    per100: { ...EMPTY_NUTRIENTS },
-    portion: { label: "100 g", grams: null, nutrients: { ...EMPTY_NUTRIENTS } },
-    ingredients: null,
-    benefits: [],
-    cautions: [],
-    fit: {
-      verdict: "balanced",
-      reason: "Sem dados nutricionais confiáveis não há como avaliar o encaixe no seu objetivo.",
-    },
-    better_choices: [],
-    balance_tips: [],
-    source_name: null,
-    source_url: null,
-    problem,
-  };
-}

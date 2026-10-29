@@ -115,6 +115,200 @@ export type FoodAnalysis = {
   problem: string | null;
 };
 
+/* ------------------------------------------- composição (fontes em prioridade) */
+
+/** Formato bruto que a IA devolve (antes de qualquer confiança). */
+export type AiFoodPayload = {
+  ok?: boolean;
+  name?: string;
+  brand?: string | null;
+  category?: string | null;
+  basis?: string | null;
+  label_read?: boolean;
+  barcode?: string | null;
+  serving_size_text?: string | null;
+  serving_grams?: number | null;
+  label?: Partial<Nutrients> | null;
+  estimate?: Partial<Nutrients> | null;
+  ingredients?: string | null;
+  benefits?: unknown;
+  cautions?: unknown;
+  verdict?: string | null;
+  verdict_reason?: string | null;
+  better_choices?: unknown;
+  balance_tips?: unknown;
+  problem?: string | null;
+};
+
+/** Produto encontrado na base Open Food Facts (já normalizado). */
+export type OffMatch = {
+  nutrients: Nutrients;
+  name: string | null;
+  brands: string | null;
+  code: string | null;
+  servingSize: string | null;
+  servingQuantity: number | null;
+  ingredients: string | null;
+};
+
+export function cleanText(value: unknown, max = 200): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, max);
+}
+
+export function cleanList(value: unknown, max = 4, maxLen = 220): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => cleanText(item, maxLen))
+    .filter((item): item is string => !!item)
+    .slice(0, max);
+}
+
+export function cleanSuggestions(value: unknown): FoodSuggestion[] {
+  if (!Array.isArray(value)) return [];
+  const out: FoodSuggestion[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const name = cleanText((item as FoodSuggestion).name, 80);
+    const why = cleanText((item as FoodSuggestion).why, 160);
+    if (name && why) out.push({ name, why });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+const VERDICT_VALUES: FitVerdict[] = ["good", "balanced", "moderation", "alternative"];
+
+function clampPortion(value: unknown): number | null {
+  const grams = toNumber(value);
+  if (grams == null || grams <= 0) return null;
+  return Math.min(Math.max(grams, 1), 5000);
+}
+
+/**
+ * Monta a análise final respeitando a prioridade das fontes:
+ * rótulo lido > Open Food Facts > estimativa pela imagem > sem dados.
+ * Nunca mistura fontes dentro do mesmo conjunto de valores.
+ */
+export function composeAnalysis(
+  payload: AiFoodPayload,
+  off: OffMatch | null,
+  goal: NutritionGoal,
+): FoodAnalysis {
+  const name = cleanText(payload.name, 90) ?? "";
+  if (payload.ok === false || !name) {
+    return unknownAnalysis(
+      cleanText(payload.problem, 180) ?? "Não consegui identificar o alimento nesta foto.",
+      name || null,
+      goal,
+    );
+  }
+
+  const basis: "100 g" | "100 ml" = payload.basis === "100 ml" ? "100 ml" : "100 g";
+  const label = sanitizeNutrients(payload.label ?? {});
+  const estimate = sanitizeNutrients(payload.estimate ?? {});
+
+  let origin: DataOrigin = "unknown";
+  let per100: Nutrients = { ...EMPTY_NUTRIENTS };
+
+  if (payload.label_read === true && hasNutrition(label)) {
+    origin = "label";
+    per100 = label;
+  } else if (off && hasNutrition(off.nutrients)) {
+    origin = "openfoodfacts";
+    per100 = off.nutrients;
+  } else if (hasNutrition(estimate)) {
+    origin = "estimate";
+    per100 = estimate;
+  }
+
+  const aiGrams = clampPortion(payload.serving_grams);
+  const servingGrams = aiGrams ?? clampPortion(off?.servingQuantity);
+  const servingLabel = aiGrams
+    ? (cleanText(payload.serving_size_text, 40) ?? cleanText(off?.servingSize, 40))
+    : (cleanText(off?.servingSize, 40) ?? cleanText(payload.serving_size_text, 40));
+  const portion = buildPortion(per100, servingGrams, servingLabel, basis);
+
+  const offName = off?.name ?? null;
+  const sourceName =
+    origin === "openfoodfacts"
+      ? `${offName ?? "Open Food Facts"}${off?.brands ? ` · ${off.brands}` : ""}`.slice(0, 120)
+      : null;
+
+  const verdict: FitVerdict = VERDICT_VALUES.includes(payload.verdict as FitVerdict)
+    ? (payload.verdict as FitVerdict)
+    : "balanced";
+
+  const reason =
+    cleanText(payload.verdict_reason, 320) ??
+    (origin === "unknown"
+      ? "Sem valores nutricionais confiáveis, não dá para avaliar o encaixe no seu objetivo."
+      : "Avaliação geral considerando porção e contexto alimentar.");
+
+  return {
+    ok: true,
+    name,
+    brand: cleanText(payload.brand, 60),
+    category: cleanText(payload.category, 50),
+    origin,
+    goal,
+    basis,
+    per100,
+    portion,
+    ingredients: cleanText(payload.ingredients, 600) ?? cleanText(off?.ingredients, 600),
+    benefits: cleanList(payload.benefits, 4),
+    cautions: cleanList(payload.cautions, 4),
+    fit: { verdict, reason },
+    better_choices: cleanSuggestions(payload.better_choices),
+    balance_tips: cleanList(payload.balance_tips, 4),
+    source_name: sourceName,
+    source_url:
+      origin === "openfoodfacts"
+        ? off?.code
+          ? `https://world.openfoodfacts.org/product/${off.code}`
+          : "https://world.openfoodfacts.org"
+        : null,
+    problem:
+      origin === "unknown"
+        ? (cleanText(payload.problem, 180) ??
+          "Não encontrei valores nutricionais confiáveis para este item.")
+        : null,
+  };
+}
+
+/** Resposta neutra quando nada pôde ser lido (nunca inventa valores). */
+export function unknownAnalysis(
+  problem: string,
+  name: string | null = null,
+  goal: NutritionGoal = "know",
+): FoodAnalysis {
+  return {
+    ok: false,
+    name: name ?? "",
+    brand: null,
+    category: null,
+    origin: "unknown",
+    goal,
+    basis: "100 g",
+    per100: { ...EMPTY_NUTRIENTS },
+    portion: { label: "100 g", grams: null, nutrients: { ...EMPTY_NUTRIENTS } },
+    ingredients: null,
+    benefits: [],
+    cautions: [],
+    fit: {
+      verdict: "balanced",
+      reason: "Sem dados nutricionais confiáveis não há como avaliar o encaixe no seu objetivo.",
+    },
+    better_choices: [],
+    balance_tips: [],
+    source_name: null,
+    source_url: null,
+    problem,
+  };
+}
+
 /* --------------------------------------------------------------- utilidades */
 
 export function round(value: number, digits = 1): number {
