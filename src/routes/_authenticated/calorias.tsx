@@ -321,6 +321,13 @@ function CaloriasPage() {
             );
           })}
         </div>
+        {analysis && analysis.goal !== goal && (
+          <p className="mt-2 flex items-start gap-1.5 text-[11px] text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0" />
+            Você mudou o objetivo. A avaliação acima considera “{goalLabel(analysis.goal)}” —
+            fotografe de novo para reavaliar com o objetivo novo.
+          </p>
+        )}
       </section>
 
       {error && (
