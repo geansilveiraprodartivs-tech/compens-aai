@@ -18,6 +18,7 @@ import { usePurchase } from "@/hooks/usePurchase";
 import { brl, UNITS } from "@/lib/compensai";
 import { lineSavings } from "@/lib/savings";
 import { PhotoAdd } from "@/components/PhotoAdd";
+import { VoiceAdd } from "@/components/VoiceAdd";
 
 function NameEdit({
   value,
@@ -204,9 +205,15 @@ function ListaPage() {
 
   return (
     <div className="space-y-5">
-      <PhotoAdd
-        onAdd={(item) => add.mutateAsync({ ...item, brand: null, reference_price: null })}
-      />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <PhotoAdd
+          onAdd={(item) => add.mutateAsync({ ...item, brand: null, reference_price: null })}
+        />
+        <VoiceAdd
+          onAdd={(item) => add.mutateAsync({ ...item, brand: null, reference_price: null })}
+          existingNames={Array.from(addedNames)}
+        />
+      </div>
       <form onSubmit={submit} className="glass space-y-3 p-4">
         <h2 className="font-bold">Adicionar produto</h2>
         <Input placeholder="Produto" value={name} onChange={(e) => setName(e.target.value)} />
