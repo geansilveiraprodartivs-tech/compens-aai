@@ -13,7 +13,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { UNITS } from "@/lib/compensai";
+import { brl, UNITS } from "@/lib/compensai";
 import { parseVoiceProducts, productKey, type VoiceDraft } from "@/lib/voiceList";
 import {
   createSpeechEngine,
@@ -83,6 +83,70 @@ function QtyField({ value, onChange }: { value: number; onChange: (value: number
       className="h-9 w-16 text-center"
     />
   );
+}
+
+/**
+ * Preço TOTAL do item, como foi falado ("por 13,49"). Vazio = sem preço.
+ * O valor por unidade é calculado na confirmação (ver `unitPriceOf`).
+ */
+function PriceField({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (value: number | null) => void;
+}) {
+  const format = (price: number | null) =>
+    price == null ? "" : price.toFixed(2).replace(".", ",");
+  const [text, setText] = useState(format(value));
+
+  useEffect(() => setText(format(value)), [value]);
+
+  function commit(raw: string) {
+    let cleaned = raw.replace(/[^\d.,]/g, "");
+    if (!cleaned.trim()) {
+      setText("");
+      if (value != null) onChange(null);
+      return;
+    }
+    // "1.299,90" e "13,49" viram 1299.90 / 13.49
+    if (cleaned.includes(",")) cleaned = cleaned.replace(/\./g, "").replace(",", ".");
+    const parsed = Number(cleaned);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setText(format(value));
+      return;
+    }
+    const money = Math.round(parsed * 100) / 100;
+    setText(format(money));
+    if (money !== value) onChange(money);
+  }
+
+  return (
+    <div className="relative flex-1">
+      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+        R$
+      </span>
+      <Input
+        inputMode="decimal"
+        aria-label="Preço total do item"
+        placeholder="0,00"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="h-9 pl-7 text-right"
+      />
+    </div>
+  );
+}
+
+/**
+ * Converte o total falado no preço POR UNIDADE que o banco guarda
+ * (`listTotals` faz quantity × price). null/0 = item sem preço.
+ */
+function unitPriceOf(draft: VoiceDraft): number {
+  if (draft.price == null || draft.price <= 0 || !(draft.quantity > 0)) return 0;
+  return Math.round((draft.price / draft.quantity) * 1e6) / 1e6;
 }
 
 export function VoiceAdd({
@@ -256,7 +320,7 @@ export function VoiceAdd({
       for (const draft of usable) {
         await onAdd({
           name: draft.name.trim(),
-          price: 0,
+          price: unitPriceOf(draft),
           quantity: draft.quantity,
           unit: draft.unit,
         });
@@ -313,6 +377,9 @@ export function VoiceAdd({
               <p className="text-center text-xs text-muted-foreground">
                 Fale um produto por vez ou vários separados por vírgula ou “e”. Ex.: “dois quilos de
                 batata, três caixas de leite e uma dúzia de ovos”.
+              </p>
+              <p className="text-center text-xs text-muted-foreground">
+                Pode falar o preço junto. Ex.: “500 gramas de presunto por 13,49”.
               </p>
             </div>
 
@@ -396,6 +463,20 @@ export function VoiceAdd({
                           <span className="text-xs text-muted-foreground">já na lista</span>
                         )}
                       </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Preço total</span>
+                        <PriceField
+                          value={draft.price}
+                          onChange={(price) => updateDraft(draft.id, { price })}
+                        />
+                      </div>
+                      {draft.price != null && draft.price > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          {draft.quantity > 0 && draft.quantity !== 1
+                            ? `${brl(draft.price)} no total · ${brl(unitPriceOf(draft))} por ${draft.unit}`
+                            : `${brl(draft.price)} no total`}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
