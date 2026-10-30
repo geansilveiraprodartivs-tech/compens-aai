@@ -487,6 +487,9 @@ function AnalysisCard({
   const origin = ORIGIN_STYLE[analysis.origin];
   const OriginIcon = origin.icon;
   const verdict = VERDICTS[analysis.fit.verdict];
+  const confidence: Confidence = CONFIDENCE_STYLE[analysis.confidence]
+    ? analysis.confidence
+    : "medium";
   const unit = analysis.basis === "100 ml" ? "ml" : "g";
 
   const [amount, setAmount] = useState("");
@@ -524,10 +527,10 @@ function AnalysisCard({
                 </p>
               )}
               <span
-                className={`mt-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${CONFIDENCE_STYLE[analysis.confidence]}`}
-                title={CONFIDENCE_HINTS[analysis.confidence]}
+                className={`mt-1.5 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${CONFIDENCE_STYLE[confidence]}`}
+                title={CONFIDENCE_HINTS[confidence]}
               >
-                <ScanLine className="size-3" /> {CONFIDENCE_LABELS[analysis.confidence]}
+                <ScanLine className="size-3" /> {CONFIDENCE_LABELS[confidence]}
               </span>
             </div>
           </div>
@@ -573,7 +576,7 @@ function AnalysisCard({
             </p>
           )}
 
-          {analysis.confidence === "low" && (
+          {confidence === "low" && (
             <p className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
               <Info className="mt-0.5 size-3.5 shrink-0" />A identificação ficou incerta. Use a
               pesquisa por nome e marca acima para confirmar o produto antes de considerar estes
