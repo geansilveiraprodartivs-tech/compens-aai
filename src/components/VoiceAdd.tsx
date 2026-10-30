@@ -14,7 +14,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { brl, UNITS } from "@/lib/compensai";
-import { parseVoiceProducts, productKey, type VoiceDraft } from "@/lib/voiceList";
+import {
+  appendTranscriptChunks,
+  parseVoiceProducts,
+  productKey,
+  type VoiceDraft,
+} from "@/lib/voiceList";
 import {
   createSpeechEngine,
   isNativeSpeech,
@@ -166,8 +171,10 @@ export function VoiceAdd({
   const engineRef = useRef<SpeechEngine | null>(null);
   const finalRef = useRef("");
   const chunksRef = useRef<string[]>([]);
+  /** Produtos já enviados para a lista por este componente (evita duplicar). */
+  const addedRef = useRef<Set<string>>(new Set());
 
-  const existing = new Set(existingNames.map(productKey));
+  const existing = new Set<string>([...existingNames.map(productKey), ...addedRef.current]);
   const readyCount = drafts.filter(
     (d) => d.name.trim() && !existing.has(productKey(d.name)),
   ).length;
@@ -200,21 +207,18 @@ export function VoiceAdd({
   }
 
   /**
-   * Guarda um trecho final do reconhecimento. Alguns navegadores repetem o
-   * mesmo resultado (ou reenviam a transcrição inteira), o que duplicaria
-   * produtos — então trechos repetidos/cumulativos são ignorados.
+   * Guarda um trecho final do reconhecimento.
+   *
+   * Alguns reconhecedores repetem o mesmo resultado (às vezes reenviando a
+   * transcrição inteira, às vezes com pontuação diferente). `appendTranscriptChunks`
+   * compara pelo `productKey` (sem acento/pontuação) e evita que a mesma fala
+   * vire itens duplicados.
    */
   function pushFinal(text: string) {
-    const clean = text.replace(/\s+/g, " ").trim();
-    if (!clean) return;
-    const chunks = chunksRef.current;
-    const last = chunks[chunks.length - 1] ?? "";
-    const whole = chunks.join(" ").trim();
-    if (clean === last || clean === whole) return;
-    if (last.endsWith(clean)) return;
-    if (whole && clean.startsWith(whole)) chunksRef.current = [clean];
-    else chunks.push(clean);
-    finalRef.current = chunksRef.current.join(" ");
+    const chunks = appendTranscriptChunks(chunksRef.current, text);
+    if (chunks === chunksRef.current) return;
+    chunksRef.current = chunks;
+    finalRef.current = chunks.join(" ");
   }
 
   function resetSession() {
@@ -308,7 +312,14 @@ export function VoiceAdd({
   }
 
   async function confirm() {
-    const usable = drafts.filter((d) => d.name.trim() && !existing.has(productKey(d.name)));
+    if (saving) return;
+
+    const usable = drafts.filter(
+      (d) =>
+        d.name.trim() &&
+        !existing.has(productKey(d.name)) &&
+        !addedRef.current.has(productKey(d.name)),
+    );
     const skipped = drafts.length - usable.length;
     if (usable.length === 0) {
       toast.error("Nada novo para adicionar. Ajuste os produtos ou fale de novo.");
@@ -318,12 +329,15 @@ export function VoiceAdd({
     setSaving(true);
     try {
       for (const draft of usable) {
+        const key = productKey(draft.name);
         await onAdd({
           name: draft.name.trim(),
           price: unitPriceOf(draft),
           quantity: draft.quantity,
           unit: draft.unit,
         });
+        // marcado só depois de gravar: se falhar, o item continua disponível
+        if (key) addedRef.current.add(key);
       }
       toast.success(
         usable.length === 1

@@ -192,6 +192,221 @@ const LEADING_NOISE = new Set([
 /** Pontuação que separa produtos. */
 const BOUNDARY_PUNCT = new Set([",", ";", ".", "!", "?", "@"]);
 
+/**
+ * Cabeças de produto conhecidas (sem acento, minúsculas).
+ *
+ * Por que existe: o reconhecedor de voz — em especial o nativo do APK — devolve
+ * a fala SEM vírgulas e sem marcar pausas ("batata carne arroz e feijão").
+ * Sem esta lista, tudo antes do "e" viraria um único produto gigante.
+ *
+ * Só entram substantivos que são produtos de verdade. Adjetivos que costumam
+ * acompanhar outro produto ("integral", "moída", "preto", "doce", "pó") ficam
+ * de fora de propósito, para não quebrar nomes compostos.
+ */
+const PRODUCT_HEADS = new Set<string>([
+  // frutas
+  "banana",
+  "bananas",
+  "maca",
+  "macas",
+  "laranja",
+  "laranjas",
+  "mamao",
+  "melancia",
+  "melao",
+  "uva",
+  "uvas",
+  "abacaxi",
+  "manga",
+  "pera",
+  "limao",
+  "tangerina",
+  "mexerica",
+  "morango",
+  "morangos",
+  "abacate",
+  "goiaba",
+  "kiwi",
+  "pessego",
+  "ameixa",
+  "ameixas",
+  "cereja",
+  "acerola",
+  "maracuja",
+  "caqui",
+  "figo",
+  "coco",
+  // verduras e legumes
+  "cebola",
+  "cebolas",
+  "alho",
+  "tomate",
+  "tomates",
+  "batata",
+  "batatas",
+  "cenoura",
+  "cenouras",
+  "abobrinha",
+  "abobora",
+  "chuchu",
+  "brocolis",
+  "couve",
+  "alface",
+  "rucula",
+  "agriao",
+  "espinafre",
+  "repolho",
+  "pepino",
+  "pimentao",
+  "beterraba",
+  "mandioca",
+  "aipim",
+  "inhame",
+  "quiabo",
+  "berinjela",
+  "milho",
+  "ervilha",
+  "vagem",
+  "salsinha",
+  "cebolinha",
+  "coentro",
+  "gengibre",
+  "cogumelo",
+  "champignon",
+  // carnes, peixes e frios
+  "carne",
+  "carnes",
+  "frango",
+  "peixe",
+  "peixes",
+  "porco",
+  "costela",
+  "alcatra",
+  "picanha",
+  "coxa",
+  "sobrecoxa",
+  "file",
+  "bife",
+  "linguica",
+  "salsicha",
+  "bacon",
+  "presunto",
+  "mortadela",
+  "salame",
+  "hamburguer",
+  "ovo",
+  "ovos",
+  "tilapia",
+  "sardinha",
+  "atum",
+  "camarao",
+  "patinho",
+  // laticínios
+  "leite",
+  "queijo",
+  "queijos",
+  "iogurte",
+  "manteiga",
+  "margarina",
+  "requeijao",
+  "creme",
+  "nata",
+  "ricota",
+  "mussarela",
+  "mucarela",
+  "parmesao",
+  "catupiry",
+  "provolone",
+  "coalhada",
+  // grãos, massas e padaria
+  "arroz",
+  "feijao",
+  "macarrao",
+  "espaguete",
+  "farinha",
+  "aveia",
+  "granola",
+  "cereal",
+  "pao",
+  "paes",
+  "biscoito",
+  "bolacha",
+  "bolo",
+  "torrada",
+  "tapioca",
+  "cuscuz",
+  "fuba",
+  "lentilha",
+  "quinoa",
+  "trigo",
+  "polvilho",
+  "fermento",
+  // despensa
+  "acucar",
+  "sal",
+  "oleo",
+  "azeite",
+  "vinagre",
+  "cafe",
+  "cha",
+  "achocolatado",
+  "molho",
+  "extrato",
+  "ketchup",
+  "maionese",
+  "mostarda",
+  "mel",
+  "geleia",
+  "chocolate",
+  "bala",
+  "sorvete",
+  "suco",
+  "refrigerante",
+  "agua",
+  "cerveja",
+  "vinho",
+  "tempero",
+  "caldo",
+  // limpeza, higiene e casa
+  "sabao",
+  "detergente",
+  "amaciante",
+  "desinfetante",
+  "alvejante",
+  "papel",
+  "absorvente",
+  "fralda",
+  "shampoo",
+  "condicionador",
+  "sabonete",
+  "desodorante",
+  "pasta",
+  "escova",
+  "esponja",
+  "vassoura",
+  "rodo",
+  "saco",
+  "pilha",
+  "lampada",
+  "vela",
+  "fosforo",
+  "carvao",
+  "racao",
+  "areia",
+  "guardanapo",
+  "copo",
+]);
+
+/**
+ * Palavras que "colam" no produto anterior, indicando nome composto:
+ * "filé de frango", "suco de laranja", "café com leite", "pão de queijo".
+ * Nesses casos a cabeça seguinte NÃO abre um produto novo.
+ */
+const HEAD_GLUE = new Set(["de", "do", "da", "dos", "das", "com", "sem"]);
+
+/** Quantas palavras olhar à frente para decidir se uma quantidade abre item. */
+const QUANTITY_LOOKAHEAD = 4;
+
 /** Valor em reais de um preço já interpretado. */
 type Amount = { value: number; next: number };
 
@@ -407,18 +622,72 @@ function findPriceSpans(tokens: string[]): PriceSpan[] {
 
 /* ---------------------------------------------------------------- produtos */
 
-/** Divide a fala em trechos de produto (vírgula, "e", ponto… fora dos preços). */
+/** Um token é uma unidade contada como quantidade ("quilos", "caixas", "dúzia")? */
+function isQuantityUnit(word: string): boolean {
+  return (
+    UNIT_WORDS[word] != null || CONTAINER_WORDS.has(word) || word === "duzia" || word === "duzias"
+  );
+}
+
+/**
+ * O token em `index` começa um produto novo mesmo SEM vírgula e SEM "e"?
+ *
+ * É o que resolve o caso do reconhecedor nativo do APK, que devolve
+ * "batata carne arroz e feijão" (sem pausas):
+ *  1. substantivo de produto conhecido, desde que a palavra anterior não seja
+ *     de ligação — "pão de queijo", "suco de laranja" e "café com leite"
+ *     continuam sendo UM produto;
+ *  2. quantidade seguida de unidade e de ligação/produto — "... batata um quilo
+ *     de arroz" → "um quilo de arroz" abre um novo item.
+ */
+function opensNewProduct(tokens: string[], index: number, covered: boolean[]): boolean {
+  if (index === 0 || covered[index]) return false;
+
+  const word = fold(tokens[index] ?? "");
+  if (HEAD_GLUE.has(fold(tokens[index - 1] ?? ""))) return false;
+
+  if (PRODUCT_HEADS.has(word)) return true;
+
+  if (readNumber(word) == null) return false;
+
+  const limit = Math.min(index + QUANTITY_LOOKAHEAD, tokens.length - 1);
+  for (let look = index + 1; look <= limit; look += 1) {
+    const next = fold(tokens[look] ?? "");
+    if (!isQuantityUnit(next)) continue;
+    const after = fold(tokens[look + 1] ?? "");
+    // sem palavra depois ("... e três caixas") a quantidade já abre o item
+    return after === "" || HEAD_GLUE.has(after) || PRODUCT_HEADS.has(after);
+  }
+  return false;
+}
+
+/**
+ * Divide a fala em trechos de produto: pontuação, "e", "&" e a heurística de
+ * `opensNewProduct` (fala sem pausas). Preços já reconhecidos são preservados
+ * dentro do trecho para o cálculo posterior.
+ */
 function splitSegments(tokens: string[], covered: boolean[]): Array<[number, number]> {
   const segments: Array<[number, number]> = [];
   let start = 0;
 
   for (let index = 0; index < tokens.length; index += 1) {
+    if (covered[index]) continue;
     const word = fold(tokens[index] ?? "");
-    const boundary = (BOUNDARY_PUNCT.has(word) || word === "e" || word === "&") && !covered[index];
-    if (!boundary) continue;
-    if (index > start) segments.push([start, index]);
-    start = index + 1;
+
+    // pontuação e "e" são separadores consumidos (não entram no nome)
+    if (BOUNDARY_PUNCT.has(word) || word === "e" || word === "&") {
+      if (index > start) segments.push([start, index]);
+      start = index + 1;
+      continue;
+    }
+
+    // cabeça de produto / nova quantidade: o token abre o trecho seguinte
+    if (index > start && opensNewProduct(tokens, index, covered)) {
+      segments.push([start, index]);
+      start = index;
+    }
   }
+
   if (start < tokens.length) segments.push([start, tokens.length]);
 
   return segments;
@@ -487,17 +756,34 @@ export function parseVoiceProducts(transcript: string): VoiceDraft[] {
   }
 
   const drafts: VoiceDraft[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
 
+  /**
+   * Registra um item. Nome já reconhecido nesta mesma fala NÃO cria outra linha
+   * (evita repetição); só completa o que faltava (preço, quantidade, unidade).
+   */
   function push(
     item: { name: string; quantity: number; unit: string } | null,
     price: number | null,
   ) {
     if (!item) return;
     const key = productKey(item.name);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    drafts.push({ ...item, price });
+    if (!key) return;
+
+    const at = seen.get(key);
+    if (at == null) {
+      seen.set(key, drafts.length);
+      drafts.push({ ...item, price });
+      return;
+    }
+
+    const kept = drafts[at];
+    if (!kept) return;
+    if (kept.price == null && price != null) kept.price = price;
+    if (kept.quantity === 1 && kept.unit === "un" && (item.quantity !== 1 || item.unit !== "un")) {
+      kept.quantity = item.quantity;
+      kept.unit = item.unit;
+    }
   }
 
   for (const [segStart, segEnd] of splitSegments(tokens, covered)) {
@@ -540,4 +826,28 @@ export function parseVoiceProducts(transcript: string): VoiceDraft[] {
 /** Arredonda para centavos (evita 8.499999999 no total). */
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/* ------------------------------------------------- transcrição acumulada */
+
+/**
+ * Acumula um trecho FINAL do reconhecimento de voz sem repetir conteúdo.
+ *
+ * O mesmo trecho pode chegar mais de uma vez: o reconhecedor nativo reenvia em
+ * `onResults` o que já tinha mandado, o Web Speech repete o resultado final e
+ * alguns serviços reenviam a transcrição inteira (cumulativa). Aqui:
+ *   - trecho já contido na fala acumulada é ignorado;
+ *   - reenvio cumulativo ("batata" -> "batata carne") substitui o histórico;
+ *   - conteúdo novo é anexado e continua valendo para a próxima fala.
+ */
+export function appendTranscriptChunks(chunks: string[], text: string): string[] {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const key = productKey(clean);
+  if (!key) return chunks;
+
+  const wholeKey = productKey(chunks.join(" "));
+  if (wholeKey && ` ${wholeKey} `.includes(` ${key} `)) return chunks;
+  if (wholeKey && key.startsWith(`${wholeKey} `)) return [clean];
+
+  return [...chunks, clean];
 }
