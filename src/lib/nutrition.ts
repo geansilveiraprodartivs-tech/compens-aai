@@ -2,8 +2,11 @@
 //
 // Regras de produto:
 //  - NUNCA inventar valores. Campo sem dado = null e a interface mostra "—".
-//  - Toda análise carrega a ORIGEM do dado: rótulo lido, Open Food Facts ou
-//    estimativa pela imagem. A interface precisa deixar isso explícito.
+//  - Nenhum valor nutricional nasce de "chute" da IA: ou vem do rótulo lido na
+//    foto, ou de uma base/fonte consultada de verdade (com link).
+//  - Toda análise carrega a ORIGEM do dado: rótulo, Open Food Facts ou uma
+//    página verificada na internet. A interface precisa deixar isso explícito.
+//  - A identificação do produto é independente da leitura do rótulo.
 //  - O histórico não guarda fotos (privacidade) e é isolado por usuário.
 
 export type NutritionGoal = "lose" | "maintain" | "gain" | "know";
@@ -49,22 +52,36 @@ export const EMPTY_NUTRIENTS: Nutrients = {
 };
 
 /** De onde vieram os números — a interface mostra isso em destaque. */
-export type DataOrigin = "label" | "openfoodfacts" | "estimate" | "unknown";
+export type DataOrigin = "label" | "openfoodfacts" | "web" | "unknown";
 
 export const ORIGIN_LABELS: Record<DataOrigin, string> = {
-  label: "Lido do rótulo",
-  openfoodfacts: "Base Open Food Facts",
-  estimate: "Estimativa pela imagem",
+  label: "Lido do rótulo da foto",
+  openfoodfacts: "Open Food Facts",
+  web: "Pesquisa na internet",
   unknown: "Sem dados confiáveis",
 };
 
 export const ORIGIN_HINTS: Record<DataOrigin, string> = {
   label: "Valores transcritos da tabela nutricional que aparece na foto.",
   openfoodfacts:
-    "Valores de base pública colaborativa (Open Food Facts) para este produto. Confira o rótulo da sua embalagem.",
-  estimate:
-    "Valores aproximados, estimados pela imagem com tabelas de composição. Podem variar conforme marca, preparo e porção.",
-  unknown: "Não foi possível ler valores nutricionais com segurança nesta foto.",
+    "Ficha pública deste produto no Open Food Facts. Vale conferir o rótulo da sua embalagem.",
+  web: "Valores encontrados em uma página sobre este produto. O link e a fonte estão abaixo para você conferir.",
+  unknown: "Nenhuma fonte confiável foi encontrada para este item.",
+};
+
+/** Quanta confiança a IA tem de que identificou o produto certo. */
+export type Confidence = "high" | "medium" | "low";
+
+export const CONFIDENCE_LABELS: Record<Confidence, string> = {
+  high: "Identificação com alta confiança",
+  medium: "Identificação com confiança média",
+  low: "Identificação incerta",
+};
+
+export const CONFIDENCE_HINTS: Record<Confidence, string> = {
+  high: "Marca e tipo do produto bem visíveis na foto.",
+  medium: "Produto reconhecido, mas marca ou versão podem variar.",
+  low: "Confirme o nome e a marca antes de considerar os valores.",
 };
 
 export type FitVerdict = "good" | "balanced" | "moderation" | "alternative";
@@ -97,7 +114,11 @@ export type FoodAnalysis = {
   name: string;
   brand: string | null;
   category: string | null;
+  /** Versão/sabor detectado (ex.: "integral", "zero açúcar"). */
+  variant: string | null;
   origin: DataOrigin;
+  /** Confiança da identificação do produto (independente da fonte dos valores). */
+  confidence: Confidence;
   /** Objetivo usado na avaliação (fica registrado no histórico). */
   goal: NutritionGoal;
   /** Base dos valores de referência: 100 g ou 100 ml. */
@@ -112,6 +133,8 @@ export type FoodAnalysis = {
   balance_tips: string[];
   source_name: string | null;
   source_url: string | null;
+  /** Ressalva sobre a fonte (ex.: valores de outra versão do produto). */
+  source_note: string | null;
   problem: string | null;
 };
 
@@ -122,19 +145,18 @@ export type AiFoodPayload = {
   ok?: boolean;
   name?: string;
   brand?: string | null;
+  variant?: string | null;
   category?: string | null;
+  confidence?: string | null;
+  /** true quando a foto mostra embalagem (ajuda a priorizar a pesquisa). */
+  packaged?: boolean | null;
+  barcode?: string | null;
   basis?: string | null;
   label_read?: boolean;
-  barcode?: string | null;
+  label?: Partial<Nutrients> | null;
   serving_size_text?: string | null;
   serving_grams?: number | null;
-  label?: Partial<Nutrients> | null;
-  estimate?: Partial<Nutrients> | null;
   ingredients?: string | null;
-  benefits?: unknown;
-  cautions?: unknown;
-  verdict?: string | null;
-  verdict_reason?: string | null;
   better_choices?: unknown;
   balance_tips?: unknown;
   problem?: string | null;
@@ -149,6 +171,25 @@ export type OffMatch = {
   servingSize: string | null;
   servingQuantity: number | null;
   ingredients: string | null;
+};
+
+/**
+ * Fonte encontrada na internet. Só chega aqui depois de verificada no
+ * backend (a URL respondeu e a página realmente mostra o valor de energia).
+ */
+export type WebMatch = {
+  sourceName: string;
+  sourceUrl: string;
+  productName: string | null;
+  nutrients: Nutrients;
+  servingSize: string | null;
+  servingGrams: number | null;
+  ingredients: string | null;
+};
+
+export type AnalysisSources = {
+  off?: OffMatch | null;
+  web?: WebMatch | null;
 };
 
 export function cleanText(value: unknown, max = 200): string | null {
@@ -180,6 +221,7 @@ export function cleanSuggestions(value: unknown): FoodSuggestion[] {
 }
 
 const VERDICT_VALUES: FitVerdict[] = ["good", "balanced", "moderation", "alternative"];
+const CONFIDENCE_VALUES: Confidence[] = ["high", "medium", "low"];
 
 function clampPortion(value: unknown): number | null {
   const grams = toNumber(value);
@@ -187,20 +229,144 @@ function clampPortion(value: unknown): number | null {
   return Math.min(Math.max(grams, 1), 5000);
 }
 
+/** Frase curta por objetivo, usada no motivo do veredito. */
+function goalFocus(goal: NutritionGoal): string {
+  if (goal === "lose") return "emagrecer com saúde";
+  if (goal === "gain") return "ganhar massa muscular";
+  if (goal === "maintain") return "manter o peso";
+  return "conhecer os valores";
+}
+
+/**
+ * Veredito determinístico a partir dos números — sem IA opinando sobre
+ * nutrientes que ela não viu. Assim o motivo sempre bate com a tabela.
+ */
+export function evaluateFit(
+  per100: Nutrients,
+  goal: NutritionGoal,
+): { verdict: FitVerdict; reason: string } {
+  if (!hasNutrition(per100)) {
+    return {
+      verdict: "balanced",
+      reason: "Sem valores nutricionais confiáveis não há como avaliar o encaixe no seu objetivo.",
+    };
+  }
+
+  const positives: string[] = [];
+  const negatives: string[] = [];
+  const { kcal, fiber, protein, sugar, sat_fat, sodium, trans_fat } = per100;
+
+  if (fiber != null && fiber >= 3) positives.push(`${fmtNumber(fiber)} g de fibras por 100 g`);
+  if (protein != null && protein >= 10)
+    positives.push(`${fmtNumber(protein)} g de proteína por 100 g`);
+  if (kcal != null && kcal <= 120) positives.push(`${fmtNumber(kcal, 0)} kcal por 100 g`);
+  if (sugar != null && sugar <= 5) positives.push(`pouco açúcar (${fmtNumber(sugar)} g)`);
+  if (sat_fat != null && sat_fat <= 1.5)
+    positives.push(`pouca gordura saturada (${fmtNumber(sat_fat)} g)`);
+  if (sodium != null && sodium <= 120) positives.push(`pouco sódio (${fmtSodium(sodium)})`);
+
+  if (sugar != null && sugar > 15) negatives.push(`${fmtNumber(sugar)} g de açúcares por 100 g`);
+  if (sat_fat != null && sat_fat > 5)
+    negatives.push(`${fmtNumber(sat_fat)} g de gordura saturada por 100 g`);
+  if (sodium != null && sodium > 600) negatives.push(`${fmtSodium(sodium)} de sódio por 100 g`);
+  if (trans_fat != null && trans_fat > 0) negatives.push("gordura trans na composição");
+  if (kcal != null && kcal >= 400) negatives.push(`${fmtNumber(kcal, 0)} kcal por 100 g`);
+
+  if (goal === "know") {
+    const profile = [...positives.slice(0, 2), ...negatives.slice(0, 2)].join(", ");
+    return {
+      verdict: "balanced",
+      reason: profile
+        ? `Perfil nutricional: ${profile}.`
+        : "Sem pontos extremos nos valores disponíveis.",
+    };
+  }
+
+  let verdict: FitVerdict;
+  if (negatives.length >= 2 && positives.length === 0) verdict = "alternative";
+  else if (negatives.length >= 1) verdict = "moderation";
+  else if (positives.length >= 2) verdict = "good";
+  else if (goal === "gain" && protein != null && protein >= 10) verdict = "good";
+  else if (goal === "lose" && fiber != null && fiber >= 3) verdict = "good";
+  else verdict = "balanced";
+
+  const positive = positives.slice(0, 2).join(" e ");
+  const negative = negatives.slice(0, 2).join(" e ");
+  const focus = goalFocus(goal);
+
+  let reason: string;
+  if (verdict === "good") {
+    reason = `Para ${focus}, os números ajudam${positive ? `: ${positive}` : ""}.`;
+  } else if (verdict === "moderation") {
+    reason = `Vale moderar a frequência ou a porção${negative ? `: ${negative}` : ""}.${
+      positive ? ` Em compensação, tem ${positive}.` : ""
+    }`;
+  } else if (verdict === "alternative") {
+    reason = `Pouco alinhado a ${focus}${negative ? `: ${negative}` : ""}.`;
+  } else {
+    reason = `Perfil intermediário${positive ? `: ${positive}` : ""}${
+      negative ? `, com atenção para ${negative}` : ""
+    }.`;
+  }
+
+  return { verdict, reason };
+}
+
+/** Pontos positivos derivados dos números (nunca afirmações inventadas). */
+export function deriveBenefits(per100: Nutrients): string[] {
+  const out: string[] = [];
+  const { kcal, fiber, protein, sugar, sat_fat, sodium } = per100;
+  if (fiber != null && fiber >= 3) out.push(`Fonte de fibras: ${fmtNumber(fiber)} g por 100 g.`);
+  if (protein != null && protein >= 10)
+    out.push(`Proteína relevante: ${fmtNumber(protein)} g por 100 g.`);
+  if (kcal != null && kcal <= 120)
+    out.push(`Baixa densidade calórica: ${fmtNumber(kcal, 0)} kcal por 100 g.`);
+  if (sugar != null && sugar <= 5) out.push(`Pouco açúcar: ${fmtNumber(sugar)} g por 100 g.`);
+  if (sat_fat != null && sat_fat <= 1.5)
+    out.push(`Pouca gordura saturada: ${fmtNumber(sat_fat)} g por 100 g.`);
+  if (sodium != null && sodium <= 120) out.push(`Pouco sódio: ${fmtSodium(sodium)} por 100 g.`);
+  return out.slice(0, 4);
+}
+
+/** Pontos de atenção derivados dos números. */
+export function deriveCautions(per100: Nutrients): string[] {
+  const out: string[] = [];
+  const { kcal, sugar, sat_fat, sodium, trans_fat } = per100;
+  if (sugar != null && sugar > 15) out.push(`Açúcares: ${fmtNumber(sugar)} g por 100 g.`);
+  if (sat_fat != null && sat_fat > 5)
+    out.push(`Gordura saturada: ${fmtNumber(sat_fat)} g por 100 g.`);
+  if (trans_fat != null && trans_fat > 0)
+    out.push(`Gordura trans: ${fmtNumber(trans_fat)} g por 100 g.`);
+  if (sodium != null && sodium > 600) out.push(`Sódio: ${fmtSodium(sodium)} por 100 g.`);
+  if (kcal != null && kcal >= 400)
+    out.push(`Alta densidade calórica: ${fmtNumber(kcal, 0)} kcal por 100 g.`);
+  return out.slice(0, 4);
+}
+
+function confidenceFrom(value: unknown): Confidence {
+  return CONFIDENCE_VALUES.includes(value as Confidence) ? (value as Confidence) : "medium";
+}
+
 /**
  * Monta a análise final respeitando a prioridade das fontes:
- * rótulo lido > Open Food Facts > estimativa pela imagem > sem dados.
+ * rótulo lido na foto > Open Food Facts > página verificada na internet.
+ * Sem nenhuma delas não existe valor: a resposta fica "unknown".
  * Nunca mistura fontes dentro do mesmo conjunto de valores.
  */
 export function composeAnalysis(
   payload: AiFoodPayload,
-  off: OffMatch | null,
+  sources: AnalysisSources,
   goal: NutritionGoal,
 ): FoodAnalysis {
   const name = cleanText(payload.name, 90) ?? "";
+  const confidence = confidenceFrom(payload.confidence);
+  const off = sources.off ?? null;
+  const web = sources.web ?? null;
+
   if (payload.ok === false || !name) {
     return unknownAnalysis(
-      cleanText(payload.problem, 180) ?? "Não consegui identificar o alimento nesta foto.",
+      cleanText(payload.problem, 200) ??
+        "Não consegui identificar o produto com segurança. Tente outra foto ou informe o nome e a marca.",
       name || null,
       goal,
     );
@@ -208,72 +374,88 @@ export function composeAnalysis(
 
   const basis: "100 g" | "100 ml" = payload.basis === "100 ml" ? "100 ml" : "100 g";
   const label = sanitizeNutrients(payload.label ?? {});
-  const estimate = sanitizeNutrients(payload.estimate ?? {});
+  const labelOk = payload.label_read === true && hasNutrition(label);
 
   let origin: DataOrigin = "unknown";
   let per100: Nutrients = { ...EMPTY_NUTRIENTS };
+  let sourceName: string | null = null;
+  let sourceUrl: string | null = null;
+  let sourceNote: string | null = null;
+  let ingredients = cleanText(payload.ingredients, 600);
+  let sourceServingSize: string | null = null;
+  let sourceServingGrams: number | null = null;
 
-  if (payload.label_read === true && hasNutrition(label)) {
+  if (labelOk) {
     origin = "label";
     per100 = label;
+    sourceName = "Tabela nutricional da própria embalagem";
   } else if (off && hasNutrition(off.nutrients)) {
     origin = "openfoodfacts";
     per100 = off.nutrients;
-  } else if (hasNutrition(estimate)) {
-    origin = "estimate";
-    per100 = estimate;
+    sourceName = `${off.name ?? "Open Food Facts"}${off.brands ? ` · ${off.brands}` : ""}`.slice(
+      0,
+      120,
+    );
+    sourceUrl = off.code
+      ? `https://world.openfoodfacts.org/product/${off.code}`
+      : "https://world.openfoodfacts.org";
+    sourceServingSize = cleanText(off.servingSize, 40);
+    sourceServingGrams = clampPortion(off.servingQuantity);
+    ingredients = ingredients ?? cleanText(off.ingredients, 600);
+    if (off.name && nameMatchScore(name, off.name) < 0.6) {
+      sourceNote = `A ficha encontrada é de “${off.name}”. Confirme se é a mesma versão do produto.`;
+    }
+  } else if (web && hasNutrition(web.nutrients)) {
+    origin = "web";
+    per100 = web.nutrients;
+    sourceName = cleanText(web.sourceName, 80) ?? "Página na internet";
+    sourceUrl = web.sourceUrl;
+    sourceServingSize = cleanText(web.servingSize, 40);
+    sourceServingGrams = clampPortion(web.servingGrams);
+    ingredients = ingredients ?? cleanText(web.ingredients, 600);
+    if (web.productName && nameMatchScore(name, web.productName) < 0.6) {
+      sourceNote = `A fonte descreve “${web.productName}”. Os valores podem ser de outra versão.`;
+    }
   }
 
   const aiGrams = clampPortion(payload.serving_grams);
-  const servingGrams = aiGrams ?? clampPortion(off?.servingQuantity);
+  const servingGrams = aiGrams ?? sourceServingGrams;
   const servingLabel = aiGrams
-    ? (cleanText(payload.serving_size_text, 40) ?? cleanText(off?.servingSize, 40))
-    : (cleanText(off?.servingSize, 40) ?? cleanText(payload.serving_size_text, 40));
+    ? (cleanText(payload.serving_size_text, 40) ?? sourceServingSize)
+    : (sourceServingSize ?? cleanText(payload.serving_size_text, 40));
   const portion = buildPortion(per100, servingGrams, servingLabel, basis);
 
-  const offName = off?.name ?? null;
-  const sourceName =
-    origin === "openfoodfacts"
-      ? `${offName ?? "Open Food Facts"}${off?.brands ? ` · ${off.brands}` : ""}`.slice(0, 120)
-      : null;
-
-  const verdict: FitVerdict = VERDICT_VALUES.includes(payload.verdict as FitVerdict)
-    ? (payload.verdict as FitVerdict)
-    : "balanced";
-
-  const reason =
-    cleanText(payload.verdict_reason, 320) ??
-    (origin === "unknown"
-      ? "Sem valores nutricionais confiáveis, não dá para avaliar o encaixe no seu objetivo."
-      : "Avaliação geral considerando porção e contexto alimentar.");
+  const fit = evaluateFit(per100, goal);
 
   return {
     ok: true,
     name,
     brand: cleanText(payload.brand, 60),
     category: cleanText(payload.category, 50),
+    variant: cleanText(payload.variant, 40),
     origin,
+    confidence,
     goal,
     basis,
     per100,
     portion,
-    ingredients: cleanText(payload.ingredients, 600) ?? cleanText(off?.ingredients, 600),
-    benefits: cleanList(payload.benefits, 4),
-    cautions: cleanList(payload.cautions, 4),
-    fit: { verdict, reason },
+    ingredients,
+    benefits: deriveBenefits(per100),
+    cautions: deriveCautions(per100),
+    fit: {
+      verdict: VERDICT_VALUES.includes(fit.verdict) ? fit.verdict : "balanced",
+      reason: fit.reason,
+    },
     better_choices: cleanSuggestions(payload.better_choices),
     balance_tips: cleanList(payload.balance_tips, 4),
     source_name: sourceName,
-    source_url:
-      origin === "openfoodfacts"
-        ? off?.code
-          ? `https://world.openfoodfacts.org/product/${off.code}`
-          : "https://world.openfoodfacts.org"
-        : null,
+    source_url: sourceUrl,
+    source_note: sourceNote,
     problem:
       origin === "unknown"
-        ? (cleanText(payload.problem, 180) ??
-          "Não encontrei valores nutricionais confiáveis para este item.")
+        ? (cleanText(payload.problem, 200) ??
+          "Encontrei o produto, mas não achei uma fonte confiável com os valores nutricionais dele. " +
+            "Você pode tentar outra foto do rótulo ou pesquisar pelo nome e marca.")
         : null,
   };
 }
@@ -289,7 +471,9 @@ export function unknownAnalysis(
     name: name ?? "",
     brand: null,
     category: null,
+    variant: null,
     origin: "unknown",
+    confidence: "low",
     goal,
     basis: "100 g",
     per100: { ...EMPTY_NUTRIENTS },
@@ -305,6 +489,7 @@ export function unknownAnalysis(
     balance_tips: [],
     source_name: null,
     source_url: null,
+    source_note: null,
     problem,
   };
 }
@@ -516,6 +701,57 @@ export function fmtPortion(portion: Portion, basis: "100 g" | "100 ml"): string 
   if (portion.grams == null) return portion.label;
   const unit = basis === "100 ml" ? "ml" : "g";
   return `${portion.label} (${fmtNumber(portion.grams, 0)} ${unit})`;
+}
+
+/* ------------------------------------------------- verificação de fonte web */
+
+/** Texto visível da página (sem scripts/estilos/tags), em minúsculas. */
+export function pageToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+/**
+ * O número de kcal aparece perto de uma menção de energia/calorias?
+ * Para 0 kcal exigimos "0 kcal" explícito — nunca aceitamos zero por omissão.
+ */
+export function textConfirmsEnergy(text: string, kcal: number | null): boolean {
+  if (!text) return false;
+  const markers = /(kcal|calorias|energia|kj|quilojoule)/;
+
+  if (kcal == null) return markers.test(text);
+  if (kcal === 0) return /\b0\s*(kcal|calorias)\b/.test(text);
+
+  const variants = new Set<string>([String(Math.round(kcal))]);
+  variants.add(`${Math.round(kcal)},0`);
+  variants.add(`${Math.round(kcal)}.0`);
+
+  for (const variant of variants) {
+    let from = 0;
+    for (;;) {
+      const index = text.indexOf(variant, from);
+      if (index < 0) break;
+      const window = text.slice(Math.max(0, index - 160), index + 160);
+      if (markers.test(window)) return true;
+      from = index + variant.length;
+    }
+  }
+  return false;
+}
+
+/** A página cita pelo menos um token relevante do nome do produto? */
+export function sourceMentionsProduct(text: string, productName: string): boolean {
+  const tokens = nameTokens(productName)
+    .filter((token) => token.length > 2)
+    .slice(0, 4);
+  if (tokens.length === 0) return true;
+  return tokens.some((token) => text.includes(token));
 }
 
 /* ----------------------------------------------------------------- histórico */
