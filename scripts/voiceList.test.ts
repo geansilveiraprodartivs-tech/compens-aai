@@ -125,6 +125,13 @@ test("não quebra adjetivos em produtos separados", () => {
   assertNames("leite integral", ["Leite integral"]);
 });
 
+test("mantém variedades que parecem outro produto", () => {
+  assertNames("banana maçã", ["Banana maçã"]);
+  assertNames("tomate cereja", ["Tomate cereja"]);
+  assertNames("vinagre de maçã", ["Vinagre de maçã"]);
+  assertNames("banana maçã e tomate cereja", ["Banana maçã", "Tomate cereja"]);
+});
+
 /* -------------------------------------------------------------- quantidades */
 
 test("preserva quantidade e unidade", () => {

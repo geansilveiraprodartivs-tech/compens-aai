@@ -404,6 +404,13 @@ const PRODUCT_HEADS = new Set<string>([
  */
 const HEAD_GLUE = new Set(["de", "do", "da", "dos", "das", "com", "sem"]);
 
+/**
+ * Compostos em que a segunda palavra também é cabeça de produto, mas é uma
+ * VARIEDADE da primeira ("banana maçã", "tomate cereja"). Sem esta exceção o
+ * nome seria quebrado em dois produtos.
+ */
+const COMPOUND_TAILS = new Set(["banana maca", "tomate cereja"]);
+
 /** Quantas palavras olhar à frente para decidir se uma quantidade abre item. */
 const QUANTITY_LOOKAHEAD = 4;
 
@@ -644,9 +651,10 @@ function opensNewProduct(tokens: string[], index: number, covered: boolean[]): b
   if (index === 0 || covered[index]) return false;
 
   const word = fold(tokens[index] ?? "");
-  if (HEAD_GLUE.has(fold(tokens[index - 1] ?? ""))) return false;
+  const previous = fold(tokens[index - 1] ?? "");
+  if (HEAD_GLUE.has(previous)) return false;
 
-  if (PRODUCT_HEADS.has(word)) return true;
+  if (PRODUCT_HEADS.has(word)) return !COMPOUND_TAILS.has(`${previous} ${word}`);
 
   if (readNumber(word) == null) return false;
 
