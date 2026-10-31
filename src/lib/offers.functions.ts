@@ -87,7 +87,10 @@ async function countOffers(url: string) {
 export const getWeeklyOffers = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => z.object({ city: z.string().min(2) }).parse(i))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    const { assertPremium } = await import("@/lib/entitlement.server");
+    await assertPremium(context.userId);
+
     const city = data.city.trim();
     const list: ChainOffers[] = await Promise.all(
       CHAINS.map(async (chain) => {

@@ -14,11 +14,13 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as AuthenticatedAppRouteImport } from './routes/_authenticated/app'
+import { Route as AuthenticatedCaloriasRouteImport } from './routes/_authenticated/calorias'
 import { Route as AuthenticatedCompararRouteImport } from './routes/_authenticated/comparar'
 import { Route as AuthenticatedEconomiaRouteImport } from './routes/_authenticated/economia'
 import { Route as AuthenticatedListaRouteImport } from './routes/_authenticated/lista'
 import { Route as AuthenticatedPerfilRouteImport } from './routes/_authenticated/perfil'
 import { Route as AuthenticatedPixRouteImport } from './routes/_authenticated/pix'
+import { Route as ApiPublicCaktoRouteImport } from './routes/api/public/cakto'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -42,6 +44,11 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
 const AuthenticatedAppRoute = AuthenticatedAppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCaloriasRoute = AuthenticatedCaloriasRouteImport.update({
+  id: '/calorias',
+  path: '/calorias',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedCompararRoute = AuthenticatedCompararRouteImport.update({
@@ -69,28 +76,37 @@ const AuthenticatedPixRoute = AuthenticatedPixRouteImport.update({
   path: '/pix',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiPublicCaktoRoute = ApiPublicCaktoRouteImport.update({
+  id: '/api/public/cakto',
+  path: '/api/public/cakto',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/reset-password': typeof ResetPasswordRoute
   '/app': typeof AuthenticatedAppRoute
+  '/calorias': typeof AuthenticatedCaloriasRoute
   '/comparar': typeof AuthenticatedCompararRoute
   '/economia': typeof AuthenticatedEconomiaRoute
   '/lista': typeof AuthenticatedListaRoute
   '/perfil': typeof AuthenticatedPerfilRoute
   '/pix': typeof AuthenticatedPixRoute
+  '/api/public/cakto': typeof ApiPublicCaktoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/reset-password': typeof ResetPasswordRoute
   '/app': typeof AuthenticatedAppRoute
+  '/calorias': typeof AuthenticatedCaloriasRoute
   '/comparar': typeof AuthenticatedCompararRoute
   '/economia': typeof AuthenticatedEconomiaRoute
   '/lista': typeof AuthenticatedListaRoute
   '/perfil': typeof AuthenticatedPerfilRoute
   '/pix': typeof AuthenticatedPixRoute
+  '/api/public/cakto': typeof ApiPublicCaktoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -99,11 +115,13 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/reset-password': typeof ResetPasswordRoute
   '/_authenticated/app': typeof AuthenticatedAppRoute
+  '/_authenticated/calorias': typeof AuthenticatedCaloriasRoute
   '/_authenticated/comparar': typeof AuthenticatedCompararRoute
   '/_authenticated/economia': typeof AuthenticatedEconomiaRoute
   '/_authenticated/lista': typeof AuthenticatedListaRoute
   '/_authenticated/perfil': typeof AuthenticatedPerfilRoute
   '/_authenticated/pix': typeof AuthenticatedPixRoute
+  '/api/public/cakto': typeof ApiPublicCaktoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -112,22 +130,26 @@ export interface FileRouteTypes {
     | '/auth'
     | '/reset-password'
     | '/app'
+    | '/calorias'
     | '/comparar'
     | '/economia'
     | '/lista'
     | '/perfil'
     | '/pix'
+    | '/api/public/cakto'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
     | '/reset-password'
     | '/app'
+    | '/calorias'
     | '/comparar'
     | '/economia'
     | '/lista'
     | '/perfil'
     | '/pix'
+    | '/api/public/cakto'
   id:
     | '__root__'
     | '/'
@@ -135,11 +157,13 @@ export interface FileRouteTypes {
     | '/auth'
     | '/reset-password'
     | '/_authenticated/app'
+    | '/_authenticated/calorias'
     | '/_authenticated/comparar'
     | '/_authenticated/economia'
     | '/_authenticated/lista'
     | '/_authenticated/perfil'
     | '/_authenticated/pix'
+    | '/api/public/cakto'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -147,6 +171,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiPublicCaktoRoute: typeof ApiPublicCaktoRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -186,6 +211,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAppRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/calorias': {
+      id: '/_authenticated/calorias'
+      path: '/calorias'
+      fullPath: '/calorias'
+      preLoaderRoute: typeof AuthenticatedCaloriasRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/comparar': {
       id: '/_authenticated/comparar'
       path: '/comparar'
@@ -221,11 +253,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPixRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/cakto': {
+      id: '/api/public/cakto'
+      path: '/api/public/cakto'
+      fullPath: '/api/public/cakto'
+      preLoaderRoute: typeof ApiPublicCaktoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAppRoute: typeof AuthenticatedAppRoute
+  AuthenticatedCaloriasRoute: typeof AuthenticatedCaloriasRoute
   AuthenticatedCompararRoute: typeof AuthenticatedCompararRoute
   AuthenticatedEconomiaRoute: typeof AuthenticatedEconomiaRoute
   AuthenticatedListaRoute: typeof AuthenticatedListaRoute
@@ -235,6 +275,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAppRoute: AuthenticatedAppRoute,
+  AuthenticatedCaloriasRoute: AuthenticatedCaloriasRoute,
   AuthenticatedCompararRoute: AuthenticatedCompararRoute,
   AuthenticatedEconomiaRoute: AuthenticatedEconomiaRoute,
   AuthenticatedListaRoute: AuthenticatedListaRoute,
@@ -250,6 +291,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiPublicCaktoRoute: ApiPublicCaktoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

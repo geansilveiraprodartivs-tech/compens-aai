@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Home, ShoppingCart, Scale, PiggyBank, User, MapPin, QrCode, Flame } from "lucide-react";
 import type { ReactNode } from "react";
 import { Brand } from "@/components/Brand";
+import { TrialBanner } from "@/components/SubscriptionGate";
 import { useProfile } from "@/hooks/useProfile";
 
 const NAV = [
@@ -64,7 +65,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
         </aside>
 
-        <main className="w-full px-4 py-5 md:min-w-0 md:px-0 md:py-2">{children}</main>
+        <main className="w-full px-4 py-5 md:min-w-0 md:px-0 md:py-2">
+          <TrialBanner />
+          {children}
+        </main>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 px-1 py-2 backdrop-blur-xl md:hidden">

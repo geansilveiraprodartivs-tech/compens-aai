@@ -142,7 +142,10 @@ export const refreshPrices = createServerFn({ method: "POST" })
       })
       .parse(input),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    const { assertPremium } = await import("@/lib/entitlement.server");
+    await assertPremium(context.userId);
+
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const city = data.city.trim();
     const collectedAt = new Date().toISOString();

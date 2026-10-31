@@ -648,7 +648,10 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
       })
       .parse(d),
   )
-  .handler(async ({ data }): Promise<FoodAnalysis> => {
+  .handler(async ({ data, context }): Promise<FoodAnalysis> => {
+    const { assertPremium } = await import("@/lib/entitlement.server");
+    await assertPremium(context.userId);
+
     const goal = data.goal as NutritionGoal;
     const payload = await identifyFood({ image: data.image });
 
@@ -697,7 +700,10 @@ export const researchFoodByName = createServerFn({ method: "POST" })
       })
       .parse(d),
   )
-  .handler(async ({ data }): Promise<FoodAnalysis> => {
+  .handler(async ({ data, context }): Promise<FoodAnalysis> => {
+    const { assertPremium } = await import("@/lib/entitlement.server");
+    await assertPremium(context.userId);
+
     const goal = data.goal as NutritionGoal;
     const name = data.name.trim();
     const brand = data.brand?.trim() || null;

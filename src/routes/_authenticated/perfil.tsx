@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { LogOut, User, Wallet } from "lucide-react";
+import { LogOut, User, Wallet, Crown } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { LocationSetup } from "@/components/LocationSetup";
@@ -10,6 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
+import { PlanChoices } from "@/components/SubscriptionGate";
+import { useEntitlement } from "@/hooks/useEntitlement";
+import { describeEntitlement } from "@/lib/entitlement";
 
 export const Route = createFileRoute("/_authenticated/perfil")({
   head: () => ({
@@ -31,6 +34,7 @@ function PerfilPage() {
   const qc = useQueryClient();
   const { data: profile } = useProfile();
   const update = useUpdateProfile();
+  const { data: entitlement } = useEntitlement();
   const [budget, setBudget] = useState("");
   const [editLocation, setEditLocation] = useState(false);
 
@@ -94,6 +98,19 @@ function PerfilPage() {
         <Button onClick={saveBudget} className="w-full gradient-brand">
           Salvar orçamento
         </Button>
+      </section>
+
+      <section className="glass space-y-3 p-4">
+        <div className="flex items-start gap-2">
+          <Crown className="mt-0.5 size-4 text-accent" />
+          <div>
+            <p className="text-sm font-semibold">Meu plano</p>
+            <p className="text-xs text-muted-foreground">
+              {entitlement ? describeEntitlement(entitlement) : "Carregando..."}
+            </p>
+          </div>
+        </div>
+        <PlanChoices />
       </section>
 
       <Button variant="ghost" onClick={signOut} className="w-full text-muted-foreground">
