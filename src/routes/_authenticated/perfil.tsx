@@ -12,7 +12,14 @@ import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
 import { PlanChoices } from "@/components/SubscriptionGate";
 import { useEntitlement } from "@/hooks/useEntitlement";
-import { describeEntitlement } from "@/lib/entitlement";
+import { describeEntitlement, planSummary, type PlanSummary } from "@/lib/entitlement";
+
+const TONE_CLASS: Record<PlanSummary["tone"], string> = {
+  free: "bg-primary/15 text-primary",
+  paid: "bg-success/15 text-success",
+  blocked: "bg-destructive/15 text-destructive",
+  pending: "bg-secondary text-muted-foreground",
+};
 
 export const Route = createFileRoute("/_authenticated/perfil")({
   head: () => ({
@@ -35,6 +42,7 @@ function PerfilPage() {
   const { data: profile } = useProfile();
   const update = useUpdateProfile();
   const { data: entitlement } = useEntitlement();
+  const summary = entitlement ? planSummary(entitlement) : null;
   const [budget, setBudget] = useState("");
   const [editLocation, setEditLocation] = useState(false);
 
@@ -103,13 +111,44 @@ function PerfilPage() {
       <section className="glass space-y-3 p-4">
         <div className="flex items-start gap-2">
           <Crown className="mt-0.5 size-4 text-accent" />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">Meu plano</p>
             <p className="text-xs text-muted-foreground">
               {entitlement ? describeEntitlement(entitlement) : "Carregando..."}
             </p>
           </div>
+          {summary && (
+            <span
+              className={`shrink-0 rounded-full px-2.5 py-1 text-[9.5px] font-extrabold uppercase leading-none tracking-wide ${
+                TONE_CLASS[summary.tone] ?? TONE_CLASS["blocked"]
+              }`}
+            >
+              {summary.accessLabel}
+            </span>
+          )}
         </div>
+
+        {summary && (
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-xl border border-border/70 bg-secondary/30 p-3 text-xs">
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">Plano</dt>
+              <dd className="truncate font-semibold">{summary.planName}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">Situação</dt>
+              <dd className="truncate font-semibold">{summary.statusLabel}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">Validade</dt>
+              <dd className="truncate font-semibold">{summary.validityLabel}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-muted-foreground">Tipo de acesso</dt>
+              <dd className="truncate font-semibold">{summary.accessLabel}</dd>
+            </div>
+          </dl>
+        )}
+
         <PlanChoices />
       </section>
 

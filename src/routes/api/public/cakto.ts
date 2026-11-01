@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { handleCaktoWebhook } from "@/lib/cakto-webhook.server";
+import { handleCaktoWebhook, handleCaktoWebhookInfo } from "@/lib/cakto-webhook.server";
 
 /**
  * Endpoint público do webhook da Cakto.
@@ -10,14 +10,7 @@ import { handleCaktoWebhook } from "@/lib/cakto-webhook.server";
 export const Route = createFileRoute("/api/public/cakto")({
   server: {
     handlers: {
-      GET: async () =>
-        new Response(JSON.stringify({ ok: true, endpoint: "cakto" }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            "cache-control": "no-store",
-          },
-        }),
+      GET: async () => handleCaktoWebhookInfo(),
       POST: async ({ request }) => handleCaktoWebhook(request),
     },
   },

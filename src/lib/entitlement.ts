@@ -2,9 +2,9 @@
  * Regras de acesso do CompensAI — teste gratuito de 48 horas e assinaturas.
  *
  * Este módulo é PURO (não importa nada de servidor) para poder ser usado no
- * cliente e testado com `node scripts/subscription.test.ts`. Toda decisão de
- * acesso é tomada no servidor com o relógio do servidor; aqui ficam apenas as
- * contas, os textos e o formato dos dados persistidos.
+ * cliente e testado com `node scripts/*.test.ts`. Toda decisão de acesso é
+ * tomada no servidor com o relógio do servidor; aqui ficam apenas as contas,
+ * os textos e o formato dos dados persistidos.
  */
 
 export const TRIAL_HOURS = 48;
@@ -12,8 +12,19 @@ export const TRIAL_MS = TRIAL_HOURS * 60 * 60 * 1000;
 
 export type PlanId = "monthly" | "annual";
 
+/**
+ * Situação da assinatura.
+ *
+ * - `active`   — paga e dentro do período.
+ * - `late`     — renovação em atraso/recusada: vale o período já pago.
+ * - `paused`   — assinatura pausada na Cakto: acesso suspenso.
+ * - `canceled` — sem renovação futura, mas o período pago continua valendo.
+ * - `expired`  — período terminou.
+ * - `refunded` / `chargeback` — acesso revogado na hora.
+ * - `pending`  — pagamento em análise (nunca libera por si só).
+ */
 export type SubscriptionStatus =
-  "active" | "pending" | "canceled" | "expired" | "refunded" | "chargeback";
+  "active" | "late" | "paused" | "canceled" | "expired" | "refunded" | "chargeback" | "pending";
 
 export type Plan = {
   id: PlanId;
@@ -67,6 +78,18 @@ export function formatBRL(cents: number): string {
 
 /* ------------------------------------------------------------------ estado */
 
+/** Dados do último pagamento confirmado. Nada de nome, e-mail, CPF ou endereço. */
+export type PaymentRecord = {
+  amount_cents: number | null;
+  currency: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  offer_id: string | null;
+  offer_name: string | null;
+  transaction_id: string | null;
+  approved_at: string | null;
+};
+
 export type StoredSubscription = {
   plan: PlanId;
   status: SubscriptionStatus;
@@ -76,20 +99,52 @@ export type StoredSubscription = {
   updated_at: string;
   last_event?: string;
   last_event_id?: string;
+  payment?: PaymentRecord | null;
+};
+
+export type EventLogResult =
+  | "granted"
+  | "revoked"
+  | "canceled"
+  | "late"
+  | "paused"
+  | "resumed"
+  | "ignored"
+  | "duplicate"
+  | "unmapped";
+
+/** Registro enxuto de um evento recebido (sem dado pessoal do comprador). */
+export type EventLogEntry = {
+  at: string;
+  event: string;
+  transaction_id: string | null;
+  result: EventLogResult;
+  plan?: PlanId;
+  plan_source?: PlanSource;
+  detail?: string;
 };
 
 export type StoredBilling = {
   trial_started_at?: string | null;
   subscription?: StoredSubscription | null;
-  /** Últimos eventos de webhook já aplicados (idempotência). */
+  /** Últimos eventos da Cakto já processados (idempotência). */
   processed_events?: string[];
+  /** Últimos eventos recebidos, com o resultado de cada um (auditoria). */
+  events?: EventLogEntry[];
+  /** Contador usado para detectar escrita concorrente. */
+  rev?: number;
 };
+
+export const MAX_EVENT_LOG = 50;
+export const MAX_PROCESSED_KEYS = 50;
 
 export type AccessState =
   | "trial"
   | "trial_expired"
   | "monthly_active"
   | "annual_active"
+  | "late"
+  | "paused"
   | "pending"
   | "canceled"
   | "expired"
@@ -133,24 +188,147 @@ export function nextExpiry(
   return addDays(base, PLANS[plan].periodDays);
 }
 
-/** Classificação do plano a partir do nome do produto/oferta ou do valor pago. */
-export function detectPlan(input: {
+/* ------------------------------------------------------- plano do webhook */
+
+/**
+ * Correspondência explícita entre produto/oferta da Cakto e plano do CompensAI.
+ * Configurada em `CAKTO_PLAN_MAP` (JSON), por exemplo:
+ *
+ *   {"products":{"<id-do-produto-anual>":"annual"},"offers":{"<id-da-oferta-mensal>":"monthly"}}
+ *
+ * Quando o ID está mapeado, ele é a única fonte da verdade — nome e valor são
+ * ignorados para aquele pagamento.
+ */
+export type PlanMap = {
+  products?: Record<string, PlanId>;
+  offers?: Record<string, PlanId>;
+};
+
+export type PlanSource = "offer_map" | "product_map" | "name" | "price" | "none";
+
+/**
+ * Ponto de corte do valor pago, usado só quando não há ID mapeado nem nome
+ * reconhecível: meio do caminho entre R$ 14,90 e R$ 99,90.
+ */
+export const ANNUAL_PRICE_THRESHOLD_CENTS = Math.round(
+  (PLANS.monthly.priceCents + PLANS.annual.priceCents) / 2,
+);
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function planIdOrNull(value: unknown): PlanId | null {
+  return value === "monthly" || value === "annual" ? value : null;
+}
+
+function readPlanRecord(value: unknown): Record<string, PlanId> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out: Record<string, PlanId> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const plan = planIdOrNull(entry);
+    if (plan && key.trim() !== "") out[key.trim()] = plan;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Lê `CAKTO_PLAN_MAP`. JSON inválido é ignorado (nenhum plano inventado). */
+export function parsePlanMap(raw: string | null | undefined): PlanMap {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const source = parsed as Record<string, unknown>;
+  const map: PlanMap = {};
+  const products = readPlanRecord(source["products"]);
+  const offers = readPlanRecord(source["offers"]);
+  if (products) map.products = products;
+  if (offers) map.offers = offers;
+  return map;
+}
+
+export type PlanInput = {
+  productId?: string | null | undefined;
+  offerId?: string | null | undefined;
   productName?: string | null | undefined;
   offerName?: string | null | undefined;
   amount?: number | null | undefined;
   currency?: string | null | undefined;
-}): PlanId | null {
-  const name = `${input.productName ?? ""} ${input.offerName ?? ""}`.toLowerCase();
-  if (/\banual\b|\bannual\b|\bano\b|\byearly\b|\b365\b/.test(name)) return "annual";
-  if (/\bmensal\b|\bmonthly\b|\bm[êe]s\b|\b30 dias\b/.test(name)) return "monthly";
+};
 
-  const currency = (input.currency ?? "BRL").toUpperCase();
-  const amount =
-    typeof input.amount === "number" && Number.isFinite(input.amount) ? input.amount : null;
-  if (amount === null || amount <= 0 || currency !== "BRL") return null;
-  // 99,90 (anual) x 14,90 (mensal): o corte em R$ 40 separa com folga.
-  return amount >= 40 ? "annual" : "monthly";
+export function detectPlan(input: PlanInput): PlanId | null {
+  return resolvePlan(input, {}).plan;
 }
+
+/**
+ * Descobre o plano do CompensAI. Ordem: ID da oferta → ID do produto → nome
+ * (anual/mensal) → valor pago (somente BRL). Sem correspondência, devolve
+ * `null` — e o webhook NÃO libera acesso (nada é inventado).
+ */
+export function resolvePlan(
+  input: PlanInput,
+  map: PlanMap,
+): { plan: PlanId | null; source: PlanSource } {
+  const offerId = asString(input.offerId);
+  if (offerId && map.offers?.[offerId]) {
+    return { plan: map.offers[offerId], source: "offer_map" };
+  }
+  const productId = asString(input.productId);
+  if (productId && map.products?.[productId]) {
+    return { plan: map.products[productId], source: "product_map" };
+  }
+
+  const name = `${input.productName ?? ""} ${input.offerName ?? ""}`.toLowerCase();
+  if (/\banual\b|\bannual\b|\bano\b|\byearly\b|\b365\b/.test(name)) {
+    return { plan: "annual", source: "name" };
+  }
+  if (/\bmensal\b|\bmonthly\b|\bm[êe]s\b|\b30 dias\b/.test(name)) {
+    return { plan: "monthly", source: "name" };
+  }
+
+  const currency = (asString(input.currency) ?? "BRL").toUpperCase();
+  const amount = asNumber(input.amount);
+  if (amount === null || amount <= 0 || currency !== "BRL") {
+    return { plan: null, source: "none" };
+  }
+  const cents = Math.round(amount * 100);
+  return {
+    plan: cents >= ANNUAL_PRICE_THRESHOLD_CENTS ? "annual" : "monthly",
+    source: "price",
+  };
+}
+
+/** Extrai só o que precisamos guardar de um pagamento (sem dados pessoais). */
+export function paymentFromData(data: Record<string, unknown> | null): PaymentRecord {
+  const product = (data?.["product"] ?? null) as Record<string, unknown> | null;
+  const offer = (data?.["offer"] ?? null) as Record<string, unknown> | null;
+  const amount = asNumber(data?.["amount"]) ?? asNumber(offer?.["price"]);
+  return {
+    amount_cents: amount === null ? null : Math.round(amount * 100),
+    currency: (asString(data?.["currency"]) ?? null)?.toUpperCase() ?? null,
+    product_id: asString(product?.["id"]),
+    product_name: asString(product?.["name"]),
+    offer_id: asString(offer?.["id"]),
+    offer_name: asString(offer?.["name"]),
+    transaction_id: asString(data?.["id"]) ?? asString(data?.["refId"]),
+    approved_at: asString(data?.["paidAt"]) ?? asString(data?.["createdAt"]),
+  };
+}
+
+/* ------------------------------------------------------- decisão de acesso */
 
 /**
  * Decide o estado de acesso. `nowMs` é SEMPRE o relógio do servidor.
@@ -179,6 +357,10 @@ export function computeEntitlement(billing: StoredBilling, nowMs: number): Entit
       case "expired":
         state = "expired";
         break;
+      case "paused":
+        // Assinatura pausada na Cakto: suspende o acesso.
+        state = "paused";
+        break;
       case "pending":
         // Pagamento em análise não libera nada; se o teste ainda vale, vale o teste.
         if (trialActive) {
@@ -187,6 +369,11 @@ export function computeEntitlement(billing: StoredBilling, nowMs: number): Entit
         } else {
           state = "pending";
         }
+        break;
+      case "late":
+        // Renovação em atraso: o período já pago continua valendo.
+        state = "late";
+        hasAccess = subAlive;
         break;
       case "canceled":
         // Assinatura cancelada mantém o acesso até o fim do período já pago.
@@ -240,10 +427,18 @@ export function describeEntitlement(e: Entitlement): string {
       return `Plano mensal ativo até ${formatDate(e.subscription_expires_at)}`;
     case "annual_active":
       return `Plano anual ativo até ${formatDate(e.subscription_expires_at)}`;
+    case "late":
+      return e.has_access
+        ? `Renovação em atraso — acesso até ${formatDate(e.subscription_expires_at)}`
+        : `Renovação em atraso desde ${formatDate(e.subscription_expires_at)}`;
+    case "paused":
+      return "Assinatura pausada";
     case "pending":
       return "Pagamento em análise";
     case "canceled":
-      return `Assinatura cancelada — acesso até ${formatDate(e.subscription_expires_at)}`;
+      return e.has_access
+        ? `Assinatura cancelada — acesso até ${formatDate(e.subscription_expires_at)}`
+        : `Assinatura cancelada em ${formatDate(e.subscription_expires_at)}`;
     case "expired":
       return `Assinatura expirada em ${formatDate(e.subscription_expires_at)}`;
     case "refunded":
@@ -251,6 +446,96 @@ export function describeEntitlement(e: Entitlement): string {
     case "chargeback":
       return "Pagamento contestado";
   }
+}
+
+export type PlanSummary = {
+  planName: string;
+  statusLabel: string;
+  validityLabel: string;
+  accessLabel: string;
+  tone: "free" | "paid" | "blocked" | "pending";
+};
+
+/** Resumo para a seção "Meu plano" (plano, situação, validade e tipo de acesso). */
+export function planSummary(e: Entitlement): PlanSummary {
+  const planName =
+    e.state === "trial" || e.state === "trial_expired"
+      ? "Teste gratuito"
+      : e.plan
+        ? PLANS[e.plan].name
+        : "Sem plano ativo";
+
+  let statusLabel: string;
+  let accessLabel: string;
+  let tone: PlanSummary["tone"] = "blocked";
+
+  switch (e.state) {
+    case "trial":
+      statusLabel = "Teste gratuito ativo";
+      accessLabel = "Acesso gratuito";
+      tone = "free";
+      break;
+    case "trial_expired":
+      statusLabel = "Teste gratuito encerrado";
+      accessLabel = "Acesso expirado";
+      break;
+    case "monthly_active":
+    case "annual_active":
+      statusLabel = "Assinatura ativa";
+      accessLabel = "Acesso pago";
+      tone = "paid";
+      break;
+    case "late":
+      statusLabel = "Renovação em atraso";
+      accessLabel = e.has_access ? "Acesso pago" : "Acesso expirado";
+      tone = e.has_access ? "paid" : "blocked";
+      break;
+    case "paused":
+      statusLabel = "Assinatura pausada";
+      accessLabel = "Acesso suspenso";
+      break;
+    case "pending":
+      statusLabel = "Pagamento em análise";
+      accessLabel = "Aguardando confirmação do pagamento";
+      tone = "pending";
+      break;
+    case "canceled":
+      statusLabel = "Assinatura cancelada";
+      accessLabel = e.has_access ? "Acesso pago até o fim do período" : "Acesso cancelado";
+      tone = e.has_access ? "paid" : "blocked";
+      break;
+    case "expired":
+      statusLabel = "Assinatura expirada";
+      accessLabel = "Acesso expirado";
+      break;
+    case "refunded":
+      statusLabel = "Pagamento reembolsado";
+      accessLabel = "Acesso revogado";
+      break;
+    case "chargeback":
+      statusLabel = "Pagamento contestado";
+      accessLabel = "Acesso revogado";
+      break;
+  }
+
+  const validitySource =
+    e.state === "trial" || e.state === "trial_expired"
+      ? e.trial_ends_at
+      : e.subscription_expires_at;
+  const validityLabel = formatValidity(e, validitySource);
+
+  return { planName, statusLabel, validityLabel, accessLabel, tone };
+}
+
+function formatValidity(e: Entitlement, iso: string | null): string {
+  if (!iso) return "Sem data de validade";
+  if (e.state === "trial") return `Até ${formatDateTime(iso)}`;
+  if (e.state === "expired" || e.state === "trial_expired")
+    return `Encerrado em ${formatDate(iso)}`;
+  if (e.state === "refunded" || e.state === "chargeback" || e.state === "paused") {
+    return `Interrompido em ${formatDate(iso)}`;
+  }
+  return `Válido até ${formatDate(iso)}`;
 }
 
 export function formatRemaining(hours: number): string {
@@ -272,10 +557,30 @@ export function formatDate(iso: string | null): string {
   });
 }
 
+export function formatDateTime(iso: string | null): string {
+  const d = parseDate(iso);
+  if (!d) return "—";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
 /* ------------------------------------------------------- webhook da Cakto */
 
 export type BillingUpdate =
-  | { kind: "grant"; event: string; plan: PlanId; status: "active"; expires_at: string }
+  | {
+      kind: "grant";
+      event: string;
+      plan: PlanId;
+      status: "active";
+      expires_at: string;
+      payment: PaymentRecord;
+    }
   | { kind: "revoke"; event: string; plan: PlanId | null; status: "refunded" | "chargeback" }
   | {
       kind: "cancel";
@@ -284,8 +589,11 @@ export type BillingUpdate =
       status: "canceled";
       expires_at: string | null;
     }
-  | { kind: "pending"; event: string; plan: PlanId | null; status: "pending" }
-  | { kind: "ignore"; event: string; reason: string };
+  | { kind: "late"; event: string; plan: PlanId | null; status: "late" }
+  | { kind: "pause"; event: string; status: "paused" }
+  | { kind: "resume"; event: string; status: "active" }
+  | { kind: "ignore"; event: string; reason: string }
+  | { kind: "unmapped"; event: string; reason: string };
 
 const GRANT_EVENTS = new Set([
   "purchase_approved",
@@ -294,20 +602,14 @@ const GRANT_EVENTS = new Set([
   "subscription_late_recovered",
 ]);
 
-const PENDING_EVENTS = new Set([
-  "purchase_refused",
-  "subscription_late",
-  "subscription_renewal_refused",
-]);
-
+/** Eventos que nunca mudam o acesso (só registram). */
 const IGNORED_EVENTS = new Set([
   "checkout_abandonment",
   "initiate_checkout",
   "refund_requested",
   "dispute_defense_requested",
   "purchase_email_failed",
-  "subscription_paused",
-  "subscription_resumed",
+  "purchase_refused",
   "pix_gerado",
   "boleto_gerado",
   "picpay_gerado",
@@ -318,12 +620,39 @@ const IGNORED_EVENTS = new Set([
   "nequi_gerado",
 ]);
 
+/**
+ * Ruído de pré-venda/checkout: não mexe no acesso e não vale ocupar o log do
+ * usuário. O webhook responde 2xx na hora, sem varrer contas para descobrir o
+ * comprador.
+ */
+const NOISE_EVENTS = new Set([
+  "checkout_abandonment",
+  "initiate_checkout",
+  "purchase_email_failed",
+]);
+
+export function isNoiseEvent(event: string): boolean {
+  return NOISE_EVENTS.has(event) || /_gerado$/.test(event);
+}
+
 type CaktoOrderLike = {
-  product?: { name?: string | null } | null;
-  offer?: { name?: string | null; price?: number | null } | null;
+  id?: string | null;
+  product?: { id?: string | null; name?: string | null } | null;
+  offer?: { id?: string | null; name?: string | null; price?: number | null } | null;
   amount?: number | null;
   currency?: string | null;
 };
+
+function planInputFromData(data: CaktoOrderLike | null): PlanInput {
+  return {
+    productId: data?.product?.id,
+    offerId: data?.offer?.id,
+    productName: data?.product?.name,
+    offerName: data?.offer?.name,
+    amount: data?.amount ?? data?.offer?.price ?? null,
+    currency: data?.currency ?? null,
+  };
+}
 
 /** Traduz o evento da Cakto em uma alteração de assinatura. */
 export function mapCaktoEvent(
@@ -331,29 +660,31 @@ export function mapCaktoEvent(
   data: CaktoOrderLike | null,
   current: StoredSubscription | null,
   nowMs: number,
+  map: PlanMap = {},
 ): BillingUpdate {
-  const plan =
-    detectPlan({
-      productName: data?.product?.name,
-      offerName: data?.offer?.name,
-      amount: data?.amount ?? data?.offer?.price ?? null,
-      currency: data?.currency ?? null,
-    }) ??
-    current?.plan ??
-    null;
+  const resolved = resolvePlan(planInputFromData(data), map);
+  const plan = resolved.plan ?? current?.plan ?? null;
 
   if (GRANT_EVENTS.has(event)) {
-    const chosen: PlanId = plan ?? "monthly";
+    if (!resolved.plan) {
+      return {
+        kind: "unmapped",
+        event,
+        reason: "plano não identificado — configure CAKTO_PLAN_MAP com os IDs da Cakto",
+      };
+    }
     const keepBase =
-      current && (current.status === "active" || current.status === "canceled")
+      current &&
+      (current.status === "active" || current.status === "late" || current.status === "canceled")
         ? current.expires_at
         : null;
     return {
       kind: "grant",
       event,
-      plan: chosen,
+      plan: resolved.plan,
       status: "active",
-      expires_at: nextExpiry(keepBase, chosen, nowMs),
+      expires_at: nextExpiry(keepBase, resolved.plan, nowMs),
+      payment: paymentFromData((data ?? null) as Record<string, unknown> | null),
     };
   }
 
@@ -366,18 +697,26 @@ export function mapCaktoEvent(
   }
 
   if (event === "subscription_canceled") {
-    const chosen: PlanId = plan ?? "monthly";
+    // Não inventa período: vale o que já foi pago (ou nada).
     return {
       kind: "cancel",
       event,
       plan,
       status: "canceled",
-      expires_at: current?.expires_at ?? nextExpiry(null, chosen, nowMs),
+      expires_at: current?.expires_at ?? null,
     };
   }
 
-  if (PENDING_EVENTS.has(event)) {
-    return { kind: "pending", event, plan, status: "pending" };
+  if (event === "subscription_late" || event === "subscription_renewal_refused") {
+    return { kind: "late", event, plan, status: "late" };
+  }
+
+  if (event === "subscription_paused") {
+    return { kind: "pause", event, status: "paused" };
+  }
+
+  if (event === "subscription_resumed") {
+    return { kind: "resume", event, status: "active" };
   }
 
   if (IGNORED_EVENTS.has(event)) {
@@ -387,60 +726,201 @@ export function mapCaktoEvent(
   return { kind: "ignore", event, reason: "evento desconhecido" };
 }
 
-/** Aplica a alteração ao registro persistido. */
-export function applyBillingUpdate(
-  billing: StoredBilling,
-  update: BillingUpdate,
-  nowIso: string,
-  eventId?: string | null,
-): StoredBilling {
-  if (update.kind === "ignore") return billing;
+/** Resultado da aplicação de um evento ao registro persistido. */
+export type ApplyEventResult = {
+  billing: StoredBilling;
+  applied: boolean;
+  result: EventLogResult;
+  reason: string;
+  plan?: PlanId;
+  plan_source?: PlanSource;
+};
+
+function withLog(billing: StoredBilling, entry: EventLogEntry, bumpRev: boolean): StoredBilling {
+  const next: StoredBilling = {
+    ...billing,
+    events: [...(billing.events ?? []), entry].slice(-MAX_EVENT_LOG),
+  };
+  if (bumpRev) next.rev = (billing.rev ?? 0) + 1;
+  return next;
+}
+
+function logEntry(
+  event: string,
+  data: Record<string, unknown> | null,
+  result: EventLogResult,
+  at: string,
+  extra?: { plan?: PlanId | null; plan_source?: PlanSource; detail?: string },
+): EventLogEntry {
+  const entry: EventLogEntry = {
+    at,
+    event,
+    transaction_id: asString(data?.["id"]) ?? asString(data?.["refId"]),
+    result,
+  };
+  if (extra?.plan) entry.plan = extra.plan;
+  if (extra?.plan_source) entry.plan_source = extra.plan_source;
+  if (extra?.detail) entry.detail = extra.detail;
+  return entry;
+}
+
+/**
+ * Aplica um evento de webhook ao estado, de forma idempotente.
+ *
+ * Função pura: o servidor só persiste o `billing` devolvido. Eventos repetidos
+ * (mesma chave) e eventos sem correspondência de plano NÃO alteram o acesso.
+ */
+export function applyEventToBilling(input: {
+  billing: StoredBilling;
+  event: string;
+  data: Record<string, unknown> | null;
+  nowMs: number;
+  planMap?: PlanMap;
+}): ApplyEventResult {
+  const { event, data, nowMs } = input;
+  const map = input.planMap ?? {};
+  const nowIso = new Date(nowMs).toISOString();
+  const key = eventKey(event, data);
+  const billing = input.billing;
+  const planInput = planInputFromData((data ?? null) as CaktoOrderLike | null);
+  const resolved = resolvePlan(planInput, map);
+
+  if ((billing.processed_events ?? []).includes(key)) {
+    const logged = withLog(
+      billing,
+      logEntry(event, data, "duplicate", nowIso, {
+        plan: resolved.plan,
+        plan_source: resolved.source,
+        detail: "evento já processado",
+      }),
+      true,
+    );
+    return { billing: logged, applied: false, result: "duplicate", reason: "evento já processado" };
+  }
+
+  const update = mapCaktoEvent(
+    event,
+    (data ?? null) as CaktoOrderLike | null,
+    billing.subscription ?? null,
+    nowMs,
+    map,
+  );
+
+  if (update.kind === "ignore") {
+    const next: StoredBilling = {
+      ...withLog(
+        billing,
+        logEntry(event, data, "ignored", nowIso, {
+          plan_source: resolved.source,
+          detail: update.reason,
+        }),
+        true,
+      ),
+      processed_events: [...(billing.processed_events ?? []), key].slice(-MAX_PROCESSED_KEYS),
+    };
+    return { billing: next, applied: false, result: "ignored", reason: update.reason };
+  }
+
+  if (update.kind === "unmapped") {
+    // Não marca como processado: depois de configurar o mapa, o mesmo evento
+    // pode ser reenviado pelo painel e será aplicado.
+    const next = withLog(
+      billing,
+      logEntry(event, data, "unmapped", nowIso, {
+        plan_source: resolved.source,
+        detail: update.reason,
+      }),
+      true,
+    );
+    return {
+      billing: next,
+      applied: false,
+      result: "unmapped",
+      reason: update.reason,
+      plan_source: resolved.source,
+    };
+  }
 
   const current = billing.subscription ?? null;
-  const base: StoredSubscription = {
-    plan: update.plan ?? current?.plan ?? "monthly",
+  const updatePlan = update.kind === "pause" || update.kind === "resume" ? null : update.plan;
+  const subscription: StoredSubscription = {
+    plan: updatePlan ?? current?.plan ?? "monthly",
     status: update.status,
     started_at: current?.started_at ?? nowIso,
     expires_at: current?.expires_at ?? null,
     updated_at: nowIso,
     last_event: update.event,
   };
+  if (current?.payment) subscription.payment = current.payment;
 
-  if (update.kind === "grant") {
-    base.plan = update.plan;
-    base.expires_at = update.expires_at;
-    // Nova compra aprovada depois de um período encerrado recomeça o período.
-    if (!current || current.status === "refunded" || current.status === "chargeback") {
-      base.started_at = nowIso;
-    }
-  } else if (update.kind === "revoke") {
-    base.expires_at = nowIso;
-  } else if (update.kind === "cancel") {
-    base.expires_at = update.expires_at;
-  } else if (update.kind === "pending") {
-    base.expires_at = current?.expires_at ?? null;
+  let result: EventLogResult;
+
+  switch (update.kind) {
+    case "grant":
+      subscription.plan = update.plan;
+      subscription.expires_at = update.expires_at;
+      subscription.payment = update.payment;
+      // Nova compra aprovada depois de um período encerrado recomeça o período.
+      if (!current || current.status === "refunded" || current.status === "chargeback") {
+        subscription.started_at = nowIso;
+      }
+      result = "granted";
+      break;
+    case "revoke":
+      subscription.expires_at = nowIso;
+      result = "revoked";
+      break;
+    case "cancel":
+      subscription.expires_at = update.expires_at;
+      result = "canceled";
+      break;
+    case "late":
+      result = "late";
+      break;
+    case "pause":
+      result = "paused";
+      break;
+    case "resume":
+      result = "resumed";
+      break;
   }
 
-  if (eventId) base.last_event_id = eventId;
+  subscription.last_event_id = key;
 
-  const processed = [...(billing.processed_events ?? []), ...(eventId ? [eventId] : [])].slice(-25);
+  const next: StoredBilling = {
+    ...withLog(
+      billing,
+      logEntry(event, data, result, nowIso, {
+        plan: subscription.plan,
+        plan_source: resolved.source,
+      }),
+      true,
+    ),
+    subscription,
+    processed_events: [...(billing.processed_events ?? []), key].slice(-MAX_PROCESSED_KEYS),
+  };
 
-  return { ...billing, subscription: base, processed_events: processed };
+  return {
+    billing: next,
+    applied: true,
+    result,
+    reason: "aplicado",
+    plan: subscription.plan,
+    plan_source: resolved.source,
+  };
 }
 
+/**
+ * Chave de deduplicação. Usa o `id` do pedido (estável entre reenvios) e, na
+ * ausência dele, dados que não são pessoais.
+ */
 export function eventKey(event: string, data: Record<string, unknown> | null): string {
-  const id =
-    (typeof data?.["id"] === "string" && data["id"]) ||
-    (typeof data?.["refId"] === "string" && data["refId"]) ||
-    "";
+  const id = asString(data?.["id"]) ?? asString(data?.["refId"]);
   if (id) return `${event}:${id}`;
-  const email =
-    (typeof (data?.["customer"] as { email?: unknown } | undefined)?.email === "string"
-      ? ((data?.["customer"] as { email?: string }).email as string)
-      : "") ||
-    (typeof data?.["customerEmail"] === "string" ? (data["customerEmail"] as string) : "");
-  const createdAt = typeof data?.["createdAt"] === "string" ? (data["createdAt"] as string) : "";
-  return `${event}:${email}:${createdAt}`;
+  const createdAt = asString(data?.["createdAt"]) ?? "";
+  const product = asString((data?.["product"] as { id?: unknown } | undefined)?.id) ?? "";
+  const offer = asString((data?.["offer"] as { id?: unknown } | undefined)?.id) ?? "";
+  return `${event}:${createdAt}:${product}:${offer}`;
 }
 
 /* ------------------------------------------------- token de vínculo Cakto */

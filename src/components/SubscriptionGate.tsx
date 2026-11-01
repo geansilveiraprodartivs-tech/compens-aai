@@ -126,6 +126,12 @@ function statusNote(state: string): string | null {
   if (state === "pending") {
     return "Seu pagamento está em análise. O acesso é liberado automaticamente assim que a Cakto confirmar.";
   }
+  if (state === "late") {
+    return "Sua renovação automática não foi concluída. Se o pagamento não for confirmado, o acesso termina no fim do período já pago.";
+  }
+  if (state === "paused") {
+    return "Sua assinatura foi pausada na Cakto. Retome a assinatura ou escolha um plano para voltar a usar tudo.";
+  }
   if (state === "refunded") return "O último pagamento foi reembolsado e o acesso foi encerrado.";
   if (state === "chargeback") return "O último pagamento foi contestado e o acesso foi encerrado.";
   if (state === "canceled") return "Sua assinatura foi cancelada e o período pago terminou.";
@@ -137,6 +143,8 @@ function statusNote(state: string): string | null {
 /** Título da tela. O texto do teste gratuito é exatamente o combinado. */
 function gateTitle(state: string): string {
   if (state === "pending") return "Estamos confirmando seu pagamento";
+  if (state === "late") return "Renovação em atraso";
+  if (state === "paused") return "Sua assinatura está pausada";
   if (state === "refunded" || state === "chargeback") return "Seu acesso foi encerrado";
   if (state === "expired" || state === "canceled") return "Sua assinatura terminou!";
   return GATE_TITLE;

@@ -2,18 +2,19 @@
 //
 // Roda com:  node scripts/subscription.test.ts
 //
-// Nenhum pagamento real é feito: o webhook é exercitado apenas com payloads
-// sintéticos e assinaturas HMAC calculadas localmente.
+// Nenhum pagamento real é feito: os eventos são payloads sintéticos.
 
 import assert from "node:assert/strict";
 import {
   ANNUAL_MONTHLY_EQUIVALENT_CENTS,
   ANNUAL_SAVINGS_CENTS,
+  ANNUAL_PRICE_THRESHOLD_CENTS,
   GATE_SUBTITLE,
   GATE_TITLE,
+  MAX_EVENT_LOG,
   PLANS,
   TRIAL_MS,
-  applyBillingUpdate,
+  applyEventToBilling,
   buildCheckoutUrl,
   computeEntitlement,
   describeEntitlement,
@@ -22,11 +23,18 @@ import {
   formatBRL,
   formatRemaining,
   hmacHex,
+  isNoiseEvent,
   mapCaktoEvent,
   nextExpiry,
+  parsePlanMap,
+  paymentFromData,
+  planSummary,
+  resolvePlan,
   signCallbackToken,
   verifyCallbackToken,
   verifyWebhookSignature,
+  type PlanMap,
+  type StoredBilling,
   type StoredSubscription,
 } from "../src/lib/entitlement.ts";
 
@@ -56,6 +64,27 @@ function sub(overrides: Partial<StoredSubscription> = {}): StoredSubscription {
   };
 }
 
+/** Payload parecido com o pedido real da Cakto (com PII, que não é guardada). */
+function approvedData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "trx-1",
+    refId: "ref-1",
+    status: "approved",
+    amount: 14.9,
+    currency: "BRL",
+    createdAt: iso(NOW),
+    paidAt: iso(NOW),
+    product: { id: "prod-mensal", name: "CompensAI Mensal" },
+    offer: { id: "oferta-mensal", name: "Assinatura Mensal", price: 14.9 },
+    customer: { email: "comprador@exemplo.com", name: "Fulano de Tal" },
+    ...overrides,
+  };
+}
+
+const MAP: PlanMap = parsePlanMap(
+  '{"products":{"prod-anual":"annual","prod-mensal":"monthly"},"offers":{"oferta-anual":"annual"}}',
+);
+
 /* ------------------------------------------------------------------ preços */
 
 test("planos têm exatamente os valores pedidos", () => {
@@ -71,7 +100,6 @@ test("anual equivale a R$ 8,32 por mês e economiza R$ 78,90", () => {
   assert.equal(formatBRL(ANNUAL_MONTHLY_EQUIVALENT_CENTS), "R$ 8,32");
   assert.equal(ANNUAL_SAVINGS_CENTS, 7890);
   assert.equal(formatBRL(ANNUAL_SAVINGS_CENTS), "R$ 78,90");
-  // 12 × 14,90 = 178,80 ; 178,80 − 99,90 = 78,90
   assert.equal(12 * PLANS.monthly.priceCents - PLANS.annual.priceCents, ANNUAL_SAVINGS_CENTS);
 });
 
@@ -122,12 +150,13 @@ test("trial de 3 dias atrás já expirou", () => {
 test("sair e entrar de novo não reinicia o período", () => {
   const startedAt = iso(NOW);
   const primeiro = computeEntitlement({ trial_started_at: startedAt }, NOW + 40 * HOUR);
-  // Simula logout/login: mesmo registro persistido, relógio mais tarde.
-  const segundo = computeEntitlement({ trial_started_at: primeiro.trial_started_at! }, NOW + 40 * HOUR + 60_000);
+  const segundo = computeEntitlement(
+    { trial_started_at: primeiro.trial_started_at! },
+    NOW + 40 * HOUR + 60_000,
+  );
   assert.equal(segundo.trial_started_at, startedAt);
   assert.equal(segundo.state, "trial");
   assert.ok((segundo.trial_hours_remaining ?? 0) < 8);
-  // Reinstalar também não zera: o marco fica no servidor, não no aparelho.
   const terceiro = computeEntitlement({ trial_started_at: startedAt }, NOW + 47 * HOUR);
   assert.equal(terceiro.state, "trial");
   assert.ok((terceiro.trial_hours_remaining ?? 0) <= 1);
@@ -173,10 +202,7 @@ test("assinatura ativa mantém acesso mesmo com trial vencido", () => {
 
 test("pagamento pendente durante o trial não bloqueia o teste", () => {
   const e = computeEntitlement(
-    {
-      trial_started_at: iso(NOW),
-      subscription: sub({ status: "pending", expires_at: null }),
-    },
+    { trial_started_at: iso(NOW), subscription: sub({ status: "pending", expires_at: null }) },
     NOW + HOUR,
   );
   assert.equal(e.state, "trial");
@@ -218,6 +244,25 @@ test("assinatura cancelada e vencida bloqueia", () => {
   assert.equal(e.has_access, false);
 });
 
+test("renovação em atraso mantém o período já pago", () => {
+  const dentro = computeEntitlement({ subscription: sub({ status: "late" }) }, NOW);
+  assert.equal(dentro.state, "late");
+  assert.equal(dentro.has_access, true);
+
+  const fora = computeEntitlement(
+    { subscription: sub({ status: "late", expires_at: iso(NOW - DAY) }) },
+    NOW,
+  );
+  assert.equal(fora.state, "late");
+  assert.equal(fora.has_access, false);
+});
+
+test("assinatura pausada suspende o acesso na hora", () => {
+  const e = computeEntitlement({ subscription: sub({ status: "paused" }) }, NOW);
+  assert.equal(e.state, "paused");
+  assert.equal(e.has_access, false);
+});
+
 test("reembolso revoga o acesso na hora", () => {
   const e = computeEntitlement(
     { trial_started_at: iso(NOW - 1 * HOUR), subscription: sub({ status: "refunded" }) },
@@ -239,8 +284,7 @@ test("chargeback revoga o acesso na hora", () => {
 /* ----------------------------------------------------- renovação/período */
 
 test("renovação soma a partir do tempo que sobrou", () => {
-  const expires = nextExpiry(iso(NOW + 10 * DAY), "monthly", NOW);
-  assert.equal(expires, iso(NOW + 40 * DAY));
+  assert.equal(nextExpiry(iso(NOW + 10 * DAY), "monthly", NOW), iso(NOW + 40 * DAY));
 });
 
 test("compra depois de expirado começa a contar de agora", () => {
@@ -250,58 +294,112 @@ test("compra depois de expirado começa a contar de agora", () => {
 
 /* ------------------------------------------------------- plano do webhook */
 
-test("detecta o plano pelo nome do produto", () => {
+test("CAKTO_PLAN_MAP inválido é ignorado (nada é inventado)", () => {
+  assert.deepEqual(parsePlanMap("não é json"), {});
+  assert.deepEqual(parsePlanMap("[]"), {});
+  assert.deepEqual(parsePlanMap('{"products":{"x":"trimestral"}}'), {});
+  assert.deepEqual(parsePlanMap(null), {});
+  assert.deepEqual(parsePlanMap('{"products":{"prod-1":"annual"}}'), {
+    products: { "prod-1": "annual" },
+  });
+});
+
+test("o mapa de IDs vence nome e valor", () => {
+  const byProduct = resolvePlan(
+    { productId: "prod-anual", productName: "CompensAI Mensal", amount: 14.9 },
+    MAP,
+  );
+  assert.deepEqual(byProduct, { plan: "annual", source: "product_map" });
+
+  const byOffer = resolvePlan(
+    { offerId: "oferta-anual", productId: "prod-mensal", amount: 14.9 },
+    MAP,
+  );
+  assert.deepEqual(byOffer, { plan: "annual", source: "offer_map" });
+});
+
+test("sem ID mapeado, detecta o plano pelo nome do produto", () => {
   assert.equal(detectPlan({ productName: "CompensAI Anual" }), "annual");
   assert.equal(detectPlan({ productName: "CompensAI Mensal" }), "monthly");
   assert.equal(detectPlan({ offerName: "Assinatura anual premium" }), "annual");
+  assert.equal(resolvePlan({ productName: "CompensAI Mensal" }, MAP).source, "name");
 });
 
-test("detecta o plano pelo valor pago quando o nome não ajuda", () => {
+test("sem nome reconhecível, detecta o plano pelo valor pago (só BRL)", () => {
   assert.equal(detectPlan({ productName: "Acesso", amount: 99.9, currency: "BRL" }), "annual");
   assert.equal(detectPlan({ productName: "Acesso", amount: 14.9, currency: "BRL" }), "monthly");
   assert.equal(detectPlan({ productName: "Acesso", amount: null }), null);
   assert.equal(detectPlan({ productName: "Acesso", amount: 99.9, currency: "USD" }), null);
+  assert.equal(ANNUAL_PRICE_THRESHOLD_CENTS, 5740);
 });
 
-test("eventos de compra aprovada concedem o plano", () => {
-  const update = mapCaktoEvent(
-    "purchase_approved",
-    { product: { name: "CompensAI Anual" }, amount: 99.9, currency: "BRL" },
-    null,
-    NOW,
-  );
+test("compra aprovada libera o plano identificado e guarda só dados do pedido", () => {
+  const update = mapCaktoEvent("purchase_approved", approvedData(), null, NOW, MAP);
   assert.equal(update.kind, "grant");
   if (update.kind !== "grant") return;
-  assert.equal(update.plan, "annual");
-  assert.equal(update.expires_at, iso(NOW + 365 * DAY));
+  assert.equal(update.plan, "monthly");
+  assert.equal(update.expires_at, iso(NOW + 30 * DAY));
+  assert.equal(update.payment.amount_cents, 1490);
+  assert.equal(update.payment.currency, "BRL");
+  assert.equal(update.payment.product_id, "prod-mensal");
+  assert.equal(update.payment.offer_id, "oferta-mensal");
+  assert.equal(update.payment.transaction_id, "trx-1");
+  assert.equal(update.payment.approved_at, iso(NOW));
+});
+
+test("pagamento sem plano identificável não é concedido (unmapped)", () => {
+  const update = mapCaktoEvent(
+    "purchase_approved",
+    { id: "trx-sem-plano", product: { id: "prod-desconhecido", name: "Outro produto" } },
+    null,
+    NOW,
+    MAP,
+  );
+  assert.equal(update.kind, "unmapped");
 });
 
 test("assinatura renovada estende o período existente", () => {
   const current = sub({ plan: "annual", expires_at: iso(NOW + 20 * DAY) });
-  const update = mapCaktoEvent("subscription_renewed", { amount: 99.9 }, current, NOW);
+  const update = mapCaktoEvent(
+    "subscription_renewed",
+    approvedData({
+      id: "trx-2",
+      amount: 99.9,
+      product: { id: "prod-anual", name: "CompensAI Anual" },
+    }),
+    current,
+    NOW,
+    MAP,
+  );
   assert.equal(update.kind, "grant");
   if (update.kind !== "grant") return;
+  assert.equal(update.plan, "annual");
   assert.equal(update.expires_at, iso(NOW + 385 * DAY));
 });
 
 test("reembolso e chargeback revogam", () => {
-  assert.equal(mapCaktoEvent("refund", { amount: 14.9 }, sub(), NOW).kind, "revoke");
-  assert.equal(mapCaktoEvent("chargeback", { amount: 14.9 }, sub(), NOW).kind, "revoke");
+  assert.equal(mapCaktoEvent("refund", { amount: 14.9 }, sub(), NOW, MAP).kind, "revoke");
+  assert.equal(mapCaktoEvent("chargeback", { amount: 14.9 }, sub(), NOW, MAP).kind, "revoke");
 });
 
 test("cancelamento preserva o fim do período pago", () => {
   const current = sub({ expires_at: iso(NOW + 12 * DAY) });
-  const update = mapCaktoEvent("subscription_canceled", {}, current, NOW);
+  const update = mapCaktoEvent("subscription_canceled", {}, current, NOW, MAP);
   assert.equal(update.kind, "cancel");
   if (update.kind !== "cancel") return;
   assert.equal(update.expires_at, iso(NOW + 12 * DAY));
 });
 
-test("atraso/recusa marcam como pendente (sem liberar)", () => {
-  const update = mapCaktoEvent("subscription_late", { amount: 14.9 }, sub(), NOW);
-  assert.equal(update.kind, "pending");
-  const refused = mapCaktoEvent("purchase_refused", { amount: 14.9 }, null, NOW);
-  assert.equal(refused.kind, "pending");
+test("atraso, pausa e retomada têm cada um a sua regra", () => {
+  assert.equal(mapCaktoEvent("subscription_late", {}, sub(), NOW, MAP).kind, "late");
+  assert.equal(mapCaktoEvent("subscription_renewal_refused", {}, sub(), NOW, MAP).kind, "late");
+  assert.equal(mapCaktoEvent("subscription_paused", {}, sub(), NOW, MAP).kind, "pause");
+  assert.equal(mapCaktoEvent("subscription_resumed", {}, sub(), NOW, MAP).kind, "resume");
+});
+
+test("pagamento recusado não cancela uma assinatura existente", () => {
+  const update = mapCaktoEvent("purchase_refused", approvedData(), sub(), NOW, MAP);
+  assert.equal(update.kind, "ignore");
 });
 
 test("eventos sem efeito no acesso são ignorados", () => {
@@ -315,43 +413,253 @@ test("eventos sem efeito no acesso são ignorados", () => {
     "initiate_checkout",
     "evento_novo_desconhecido",
   ]) {
-    assert.equal(mapCaktoEvent(event, {}, sub(), NOW).kind, "ignore", event);
+    assert.equal(mapCaktoEvent(event, {}, sub(), NOW, MAP).kind, "ignore", event);
   }
 });
 
+test("eventos de ruído do checkout não entram no log", () => {
+  assert.equal(isNoiseEvent("checkout_abandonment"), true);
+  assert.equal(isNoiseEvent("pix_gerado"), true);
+  assert.equal(isNoiseEvent("purchase_approved"), false);
+  assert.equal(isNoiseEvent("refund"), false);
+});
+
+/* ------------------------------------------- aplicação e idempotência */
+
+function apply(
+  billing: StoredBilling,
+  event: string,
+  data: Record<string, unknown> | null,
+  map: PlanMap = MAP,
+  nowMs = NOW,
+) {
+  return applyEventToBilling({ billing, event, data, nowMs, planMap: map });
+}
+
 test("evento aprovado grava assinatura ativa e marca o evento como processado", () => {
-  const update = mapCaktoEvent(
+  const outcome = apply(
+    { trial_started_at: iso(NOW - 3 * DAY) },
     "purchase_approved",
-    { product: { name: "CompensAI Mensal" }, amount: 14.9 },
-    null,
-    NOW,
+    approvedData(),
   );
-  const billing = applyBillingUpdate({ trial_started_at: iso(NOW - 3 * DAY) }, update, iso(NOW), "purchase_approved:abc");
+  const billing = outcome.billing;
+  assert.equal(outcome.applied, true);
+  assert.equal(outcome.result, "granted");
   assert.ok(billing.subscription);
   assert.equal(billing.subscription?.status, "active");
   assert.equal(billing.subscription?.plan, "monthly");
-  assert.deepEqual(billing.processed_events, ["purchase_approved:abc"]);
+  assert.equal(billing.subscription?.payment?.transaction_id, "trx-1");
+  assert.deepEqual(billing.processed_events, ["purchase_approved:trx-1"]);
   assert.equal(billing.trial_started_at, iso(NOW - 3 * DAY));
+  assert.equal(billing.events?.length, 1);
   assert.equal(computeEntitlement(billing, NOW).has_access, true);
 });
 
-test("idempotência: mesmo pedido gera a mesma chave de evento", () => {
-  const data = { id: "pedido-1", refId: "X1", customer: { email: "a@b.com" } };
-  assert.equal(eventKey("purchase_approved", data), "purchase_approved:pedido-1");
+test("o log não guarda nome nem e-mail do comprador", () => {
+  const outcome = apply({}, "purchase_approved", approvedData());
+  const serialized = JSON.stringify(outcome.billing);
+  assert.equal(serialized.includes("comprador@exemplo.com"), false);
+  assert.equal(serialized.includes("Fulano"), false);
+  assert.equal(serialized.includes("customer"), false);
+});
+
+test("idempotência: o mesmo pedido não estende o acesso duas vezes", () => {
+  const first = apply({}, "purchase_approved", approvedData());
+  const expires = first.billing.subscription?.expires_at;
+  const second = apply(first.billing, "purchase_approved", approvedData());
+
+  assert.equal(second.applied, false);
+  assert.equal(second.result, "duplicate");
+  assert.equal(second.billing.subscription?.expires_at, expires);
+  assert.equal(second.billing.processed_events?.length, 1);
+  assert.equal(second.billing.events?.length, 2);
+  assert.equal(second.billing.events?.at(-1)?.result, "duplicate");
+});
+
+test("idempotência: renovação repetida não soma dois períodos", () => {
+  const bought = apply({}, "purchase_approved", approvedData()).billing;
+  const renewalData = approvedData({ id: "trx-renovacao-1" });
+  const first = apply(bought, "subscription_renewed", renewalData);
+  const expires = first.billing.subscription?.expires_at;
+  const second = apply(first.billing, "subscription_renewed", renewalData);
+  assert.equal(second.result, "duplicate");
+  assert.equal(second.billing.subscription?.expires_at, expires);
+});
+
+test("evento sem plano mapeado não é marcado como processado (permite reenvio)", () => {
+  const data = { id: "trx-9", product: { id: "prod-anual", name: "Produto Premium" } };
+  const first = apply({}, "purchase_approved", data, {});
+  assert.equal(first.result, "unmapped");
+  assert.equal(first.applied, false);
+  assert.equal(first.billing.subscription, undefined);
+  assert.equal(first.billing.processed_events, undefined);
+
+  const retry = apply(first.billing, "purchase_approved", data, MAP);
+  assert.equal(retry.result, "granted");
+  assert.equal(retry.billing.subscription?.plan, "annual");
+});
+
+test("reembolso zera o acesso no registro persistido", () => {
+  const afterBuy = apply({}, "purchase_approved", approvedData({ amount: 99.9 })).billing;
+  assert.equal(computeEntitlement(afterBuy, NOW + DAY).has_access, true);
+
+  const refund = apply(afterBuy, "refund", { id: "trx-1" }, MAP, NOW + DAY);
+  assert.equal(refund.result, "revoked");
+  assert.equal(refund.billing.subscription?.status, "refunded");
+  assert.equal(computeEntitlement(refund.billing, NOW + DAY).has_access, false);
+});
+
+test("chargeback revoga na hora", () => {
+  const afterBuy = apply({}, "purchase_approved", approvedData()).billing;
+  const chargeback = apply(afterBuy, "chargeback", { id: "trx-1" }, MAP, NOW + DAY);
+  assert.equal(chargeback.result, "revoked");
+  assert.equal(chargeback.billing.subscription?.status, "chargeback");
+  assert.equal(computeEntitlement(chargeback.billing, NOW + DAY).has_access, false);
+});
+
+test("cancelamento mantém o período pago e depois bloqueia", () => {
+  const afterBuy = apply({}, "purchase_approved", approvedData()).billing;
+  const canceled = apply(afterBuy, "subscription_canceled", { id: "trx-1" }, MAP, NOW + DAY);
+  assert.equal(canceled.result, "canceled");
+  assert.equal(canceled.billing.subscription?.expires_at, iso(NOW + 30 * DAY));
+  assert.equal(computeEntitlement(canceled.billing, NOW + 2 * DAY).has_access, true);
+  assert.equal(computeEntitlement(canceled.billing, NOW + 31 * DAY).has_access, false);
+});
+
+test("atraso não inventa período e pausa suspende até a retomada", () => {
+  const afterBuy = apply({}, "purchase_approved", approvedData()).billing;
+  const late = apply(afterBuy, "subscription_late", { id: "trx-1" }, MAP, NOW + DAY);
+  assert.equal(late.billing.subscription?.status, "late");
+  assert.equal(computeEntitlement(late.billing, NOW + 2 * DAY).has_access, true);
+  assert.equal(computeEntitlement(late.billing, NOW + 31 * DAY).has_access, false);
+
+  const paused = apply(late.billing, "subscription_paused", {}, MAP, NOW + 2 * DAY);
+  assert.equal(paused.billing.subscription?.status, "paused");
+  assert.equal(computeEntitlement(paused.billing, NOW + 2 * DAY).has_access, false);
+
+  const resumed = apply(paused.billing, "subscription_resumed", {}, MAP, NOW + 3 * DAY);
+  assert.equal(resumed.billing.subscription?.status, "active");
+  assert.equal(computeEntitlement(resumed.billing, NOW + 3 * DAY).has_access, true);
+});
+
+test("pagamento recusado é registrado mas não altera o acesso", () => {
+  const outcome = apply({ trial_started_at: iso(NOW - HOUR) }, "purchase_refused", approvedData());
+  assert.equal(outcome.result, "ignored");
+  assert.equal(outcome.billing.subscription, undefined);
+  assert.equal(outcome.billing.events?.at(-1)?.result, "ignored");
+  assert.equal(computeEntitlement(outcome.billing, NOW).has_access, true);
+});
+
+test("o log de eventos é limitado", () => {
+  let billing: StoredBilling = {};
+  for (let i = 0; i < MAX_EVENT_LOG + 12; i += 1) {
+    billing = apply(billing, "refund_requested", { id: `req-${i}` }).billing;
+  }
+  assert.equal(billing.events?.length, MAX_EVENT_LOG);
+});
+
+test("o registro de eventos processados é limitado", () => {
+  let billing: StoredBilling = {};
+  for (let i = 0; i < 60; i += 1) {
+    billing = apply(billing, "refund_requested", { id: `req-${i}` }).billing;
+  }
+  assert.equal(billing.processed_events?.length, 50);
+});
+
+test("idempotência: chave usa o id do pedido e nunca o e-mail", () => {
+  const data = approvedData();
+  assert.equal(eventKey("purchase_approved", data), "purchase_approved:trx-1");
+  const semId = eventKey("checkout_abandonment", {
+    customerEmail: "a@b.com",
+    createdAt: "2026-10-31T12:00:00Z",
+  });
+  assert.equal(semId.includes("a@b.com"), false);
+});
+
+test("paymentFromData não carrega dados pessoais", () => {
+  const payment = paymentFromData(approvedData());
+  assert.deepEqual(Object.keys(payment).sort(), [
+    "amount_cents",
+    "approved_at",
+    "currency",
+    "offer_id",
+    "offer_name",
+    "product_id",
+    "product_name",
+    "transaction_id",
+  ]);
+  // Valor da oferta é usado quando `amount` não vem no topo.
+  assert.equal(paymentFromData({ offer: { price: 99.9 } }).amount_cents, 9990);
+});
+
+/* ------------------------------------------------------------- "Meu plano" */
+
+test("resumo do plano mostra nome, situação, validade e tipo de acesso", () => {
+  const trial = planSummary(computeEntitlement({ trial_started_at: iso(NOW) }, NOW));
+  assert.equal(trial.planName, "Teste gratuito");
+  assert.equal(trial.statusLabel, "Teste gratuito ativo");
+  assert.equal(trial.accessLabel, "Acesso gratuito");
+  assert.equal(trial.tone, "free");
+  assert.match(trial.validityLabel, /^Até /);
+
+  const paid = planSummary(computeEntitlement({ subscription: sub({ plan: "annual" }) }, NOW));
+  assert.equal(paid.planName, "CompensAI Anual");
+  assert.equal(paid.statusLabel, "Assinatura ativa");
+  assert.equal(paid.accessLabel, "Acesso pago");
+  assert.equal(paid.tone, "paid");
+  assert.match(paid.validityLabel, /^Válido até /);
+
+  const canceled = planSummary(
+    computeEntitlement(
+      { subscription: sub({ status: "canceled", expires_at: iso(NOW - DAY) }) },
+      NOW,
+    ),
+  );
+  assert.equal(canceled.statusLabel, "Assinatura cancelada");
+  assert.equal(canceled.accessLabel, "Acesso cancelado");
+  assert.equal(canceled.tone, "blocked");
+
+  const expired = planSummary(computeEntitlement({ trial_started_at: iso(NOW - 5 * DAY) }, NOW));
+  assert.equal(expired.statusLabel, "Teste gratuito encerrado");
+  assert.equal(expired.accessLabel, "Acesso expirado");
+
+  const refunded = planSummary(
+    computeEntitlement({ subscription: sub({ status: "refunded" }) }, NOW),
+  );
+  assert.equal(refunded.statusLabel, "Pagamento reembolsado");
+  assert.equal(refunded.accessLabel, "Acesso revogado");
+
+  const paused = planSummary(computeEntitlement({ subscription: sub({ status: "paused" }) }, NOW));
+  assert.equal(paused.statusLabel, "Assinatura pausada");
+  assert.equal(paused.accessLabel, "Acesso suspenso");
+});
+
+test("descrição do estado é legível", () => {
+  const trial = computeEntitlement({ trial_started_at: iso(NOW) }, NOW);
+  assert.match(describeEntitlement(trial), /Teste grátis ativo/);
+  assert.match(describeEntitlement(trial), /48h/);
+
+  const active = computeEntitlement({ subscription: sub({ plan: "annual" }) }, NOW);
+  assert.match(describeEntitlement(active), /Plano anual ativo até/);
+
+  const expired = computeEntitlement({ trial_started_at: iso(NOW - 5 * DAY) }, NOW);
+  assert.equal(describeEntitlement(expired), "Teste gratuito encerrado");
+
+  assert.match(
+    describeEntitlement(computeEntitlement({ subscription: sub({ status: "late" }) }, NOW)),
+    /Renovação em atraso/,
+  );
   assert.equal(
-    eventKey("checkout_abandonment", { customerEmail: "a@b.com", createdAt: "2026-10-31T12:00:00Z" }),
-    "checkout_abandonment:a@b.com:2026-10-31T12:00:00Z",
+    describeEntitlement(computeEntitlement({ subscription: sub({ status: "paused" }) }, NOW)),
+    "Assinatura pausada",
   );
 });
 
-test("revogação zera o acesso no registro persistido", () => {
-  const grant = mapCaktoEvent("purchase_approved", { amount: 99.9 }, null, NOW);
-  const afterBuy = applyBillingUpdate({}, grant, iso(NOW), "purchase_approved:1");
-  assert.equal(computeEntitlement(afterBuy, NOW + DAY).has_access, true);
-
-  const revoke = mapCaktoEvent("refund", { amount: 99.9 }, afterBuy.subscription!, NOW + DAY);
-  const afterRefund = applyBillingUpdate(afterBuy, revoke, iso(NOW + DAY), "refund:1");
-  assert.equal(computeEntitlement(afterRefund, NOW + DAY).has_access, false);
+test("tempo restante formatado", () => {
+  assert.equal(formatRemaining(48), "48h");
+  assert.equal(formatRemaining(8.5), "8h 30min");
+  assert.equal(formatRemaining(0.5), "30 min");
+  assert.equal(formatRemaining(0), "0 min");
 });
 
 /* ------------------------------------------------- token do checkout Cakto */
@@ -401,11 +709,23 @@ test("aceita assinatura HMAC válida e recusa inválida", async () => {
     true,
   );
   assert.equal(
-    await verifyWebhookSignature({ rawBody, timestamp, signature: `v1=${"a".repeat(64)}`, secret: SECRET, nowMs: NOW }),
+    await verifyWebhookSignature({
+      rawBody,
+      timestamp,
+      signature: `v1=${"a".repeat(64)}`,
+      secret: SECRET,
+      nowMs: NOW,
+    }),
     false,
   );
   assert.equal(
-    await verifyWebhookSignature({ rawBody, timestamp, signature, secret: "outro-segredo", nowMs: NOW }),
+    await verifyWebhookSignature({
+      rawBody,
+      timestamp,
+      signature,
+      secret: "outro-segredo",
+      nowMs: NOW,
+    }),
     false,
   );
 });
@@ -419,11 +739,23 @@ test("recusa entrega antiga (replay) e cabeçalho ausente", async () => {
     false,
   );
   assert.equal(
-    await verifyWebhookSignature({ rawBody, timestamp: null, signature: null, secret: SECRET, nowMs: NOW }),
+    await verifyWebhookSignature({
+      rawBody,
+      timestamp: null,
+      signature: null,
+      secret: SECRET,
+      nowMs: NOW,
+    }),
     false,
   );
   assert.equal(
-    await verifyWebhookSignature({ rawBody, timestamp: "abc", signature, secret: SECRET, nowMs: NOW }),
+    await verifyWebhookSignature({
+      rawBody,
+      timestamp: "abc",
+      signature,
+      secret: SECRET,
+      nowMs: NOW,
+    }),
     false,
   );
 });
@@ -436,27 +768,6 @@ test("tolerância de 5 minutos aceita entrega recente", async () => {
     await verifyWebhookSignature({ rawBody, timestamp, signature, secret: SECRET, nowMs: NOW }),
     true,
   );
-});
-
-/* ---------------------------------------------------------------- textos */
-
-test("descrição do estado é legível", () => {
-  const trial = computeEntitlement({ trial_started_at: iso(NOW) }, NOW);
-  assert.match(describeEntitlement(trial), /Teste grátis ativo/);
-  assert.match(describeEntitlement(trial), /48h/);
-
-  const active = computeEntitlement({ subscription: sub({ plan: "annual" }) }, NOW);
-  assert.match(describeEntitlement(active), /Plano anual ativo até/);
-
-  const expired = computeEntitlement({ trial_started_at: iso(NOW - 5 * DAY) }, NOW);
-  assert.equal(describeEntitlement(expired), "Teste gratuito encerrado");
-});
-
-test("tempo restante formatado", () => {
-  assert.equal(formatRemaining(48), "48h");
-  assert.equal(formatRemaining(8.5), "8h 30min");
-  assert.equal(formatRemaining(0.5), "30 min");
-  assert.equal(formatRemaining(0), "0 min");
 });
 
 /* ------------------------------------------------------------------ runner */
