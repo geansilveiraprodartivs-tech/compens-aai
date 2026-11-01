@@ -1,56 +1,28 @@
-import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { Camera, ImagePlus, Loader2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { Camera, User } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAvatarUrl } from "@/hooks/useAvatar";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-
-const MAX_BYTES = 5 * 1024 * 1024;
-
-function initials(name?: string | null) {
-  const parts = (name?.trim() || "Usuário").split(/\s+/).filter(Boolean);
-  return (parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? parts[0]?.[1] ?? "");
-}
 
 export function AvatarEditor({
   path,
   userId,
-  displayName,
   onSaved,
 }: {
   path: string | null;
-  userId?: string | null | undefined;
-  displayName?: string | null | undefined;
-  onSaved: (path: string) => void;
+  userId?: string;
+  onSaved: (path: string) => Promise<unknown>;
 }) {
-  const qc = useQueryClient();
-  const { data: signedUrl } = useAvatarUrl(path);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const ref = useRef<HTMLInputElement>(null);
+  const { data: url } = useAvatarUrl(path);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      if (preview) URL.revokeObjectURL(preview);
-    };
-  }, [preview]);
-
-  function pick(event: React.ChangeEvent<HTMLInputElement>) {
-    const f = event.target.files?.[0];
-    if (event.target.value) event.target.value = "";
+  function pick(f?: File) {
     if (!f) return;
-    if (!f.type.startsWith("image/")) {
-      toast.error("Escolha uma imagem (JPG, PNG, WEBP...).");
-      return;
-    }
-    if (f.size > MAX_BYTES) {
-      toast.error("Imagem muito grande. Escolha uma com até 5 MB.");
-      return;
-    }
-    if (preview) URL.revokeObjectURL(preview);
+    if (f.size > 5 * 1024 * 1024) { toast.error("Foto maior que 5MB."); return; }
     setFile(f);
     setPreview(URL.createObjectURL(f));
   }
@@ -58,90 +30,32 @@ export function AvatarEditor({
   async function confirm() {
     if (!file || !userId) return;
     setBusy(true);
-    try {
-      const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
-      const objectPath = `${userId}/${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 8)}.${ext}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("avatars")
-        .upload(objectPath, file, { contentType: file.type, upsert: false });
-      if (uploadError) throw uploadError;
-
-      if (path && path !== objectPath) {
-        await supabase.storage
-          .from("avatars")
-          .remove([path])
-          .catch(() => {});
-      }
-
-      onSaved(objectPath);
-      qc.invalidateQueries({ queryKey: ["avatar"] });
-      if (preview) URL.revokeObjectURL(preview);
-      setFile(null);
-      setPreview(null);
-      toast.success("Foto de perfil atualizada!");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Não foi possível salvar a foto.";
-      toast.error(msg);
-    } finally {
-      setBusy(false);
-    }
+    const ext = file.name.split(".").pop() || "jpg";
+    const p = `${userId}/avatar-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("avatars").upload(p, file, { upsert: true, contentType: file.type });
+    if (error) { setBusy(false); toast.error("Não foi possível salvar a foto."); return; }
+    await onSaved(p);
+    if (path) await supabase.storage.from("avatars").remove([path]);
+    setBusy(false); setFile(null); setPreview(null);
+    toast.success("Foto atualizada!");
   }
 
-  function cancel() {
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(null);
-    setPreview(null);
-  }
-
+  const shown = preview ?? url;
   return (
-    <section className="glass p-4">
-      <div className="flex items-center gap-4">
-        <Avatar className="size-16 border border-border">
-          {preview ? (
-            <AvatarImage src={preview} alt="Nova foto selecionada" />
-          ) : signedUrl ? (
-            <AvatarImage src={signedUrl} alt="Foto de perfil" />
-          ) : (
-            <AvatarFallback className="text-lg font-bold text-primary">
-              {initials(displayName)}
-            </AvatarFallback>
-          )}
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 text-sm font-bold">
-            <Camera className="size-4 text-accent" /> Foto de perfil
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {preview
-              ? "Foto selecionada — confirme para salvar."
-              : "Escolha uma foto do seu aparelho."}
-          </p>
-        </div>
+    <section className="glass flex items-center gap-4 p-4">
+      <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/40 bg-secondary">
+        {shown ? <img src={shown} alt="Foto de perfil" className="size-full object-cover" /> : <User className="size-8 text-muted-foreground" />}
       </div>
-
-      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={pick} />
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {preview ? (
-          <>
-            <Button onClick={confirm} disabled={busy} className="flex-1 gradient-brand">
-              {busy ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <ImagePlus className="mr-2 size-4" />
-              )}
-              Confirmar foto
-            </Button>
-            <Button variant="outline" onClick={cancel} disabled={busy}>
-              Cancelar
-            </Button>
-          </>
+      <div className="flex flex-1 flex-col gap-2">
+        <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
+        {file ? (
+          <div className="flex gap-2">
+            <Button size="sm" onClick={confirm} disabled={busy}>{busy ? "Salvando..." : "Confirmar"}</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setFile(null); setPreview(null); }}>Cancelar</Button>
+          </div>
         ) : (
-          <Button variant="outline" onClick={() => inputRef.current?.click()} className="flex-1">
-            <ImagePlus className="mr-2 size-4" /> Alterar foto
+          <Button size="sm" variant="outline" onClick={() => ref.current?.click()}>
+            <Camera className="mr-2 size-4" /> Alterar foto
           </Button>
         )}
       </div>

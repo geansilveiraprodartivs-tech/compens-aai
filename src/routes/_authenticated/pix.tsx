@@ -1,52 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  CheckCircle2,
-  ExternalLink,
-  RefreshCw,
-  RotateCcw,
-  ShieldCheck,
-  Smartphone,
-  Wallet,
-  X,
-} from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { CheckCircle2, QrCode, RotateCcw, Wallet, XCircle } from "lucide-react";
 import { toast } from "sonner";
-
-import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveList, useListItems } from "@/hooks/useList";
-import { usePurchase, type PurchaseResult } from "@/hooks/usePurchase";
-import { selectPurchaseItems, summarizePurchase } from "@/lib/savings";
-import {
-  BANK_APPS,
-  type BankApp,
-  type BankPrefs,
-  type DeviceApp,
-  emptyBankPrefs,
-  getPlatform,
-  isNativeContainer,
-  listDeviceApps,
-  loadBankPrefs,
-  openBankApp,
-  openDeviceApp,
-  platformHint,
-  saveBankPrefs,
-} from "@/lib/pix";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/_authenticated/pix")({
   head: () => ({
     meta: [
       { title: "Pagar compra — CompensAI" },
-      {
-        name: "description",
-        content: "Pague sua compra com PIX no app do seu banco e registre no CompensAI.",
-      },
+      { name: "description", content: "Pague sua compra com Pix pelo app do seu banco e registre no CompensAI." },
       { property: "og:title", content: "Pagar compra — CompensAI" },
-      {
-        property: "og:description",
-        content: "Pague sua compra com PIX no app do seu banco e registre no CompensAI.",
-      },
+      { property: "og:description", content: "Pague sua compra com Pix pelo app do seu banco e registre no CompensAI." },
     ],
   }),
   component: PagarCompra,
@@ -54,60 +20,10 @@ export const Route = createFileRoute("/_authenticated/pix")({
 
 type Payment = { id: string; status: string; created_at: string; paid_at: string | null };
 
-/** Bancos que o usuário removeu da lista (persistido no aparelho). */
-const HIDDEN_BANKS_KEY = "compensai.hiddenBanks.v1";
-
-function loadHiddenBanks(): string[] {
-  try {
-    const raw = localStorage.getItem(HIDDEN_BANKS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function categoryLabel(category: DeviceApp["category"]): string {
-  if (category === "wallet") return "Carteira";
-  if (category === "bank") return "Banco";
-  return "Aplicativo";
-}
-
 function PagarCompra() {
-  const [step, setStep] = useState<"start" | "info" | "ask" | "done">("start");
-  const [hidden, setHidden] = useState<string[]>([]);
-  const [result, setResult] = useState<PurchaseResult | null>(null);
-  const [deviceApps, setDeviceApps] = useState<DeviceApp[] | null>(null);
-  const [appsSupported, setAppsSupported] = useState(true);
-  const [showAllApps, setShowAllApps] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [prefs, setPrefs] = useState<BankPrefs>(emptyBankPrefs);
-
-  const { data: list } = useActiveList();
-  const { data: items = [] } = useListItems(list?.id);
-  const preview = summarizePurchase(selectPurchaseItems(items));
-  const { confirm } = usePurchase(list?.id, items);
-
-  const { data: uid } = useQuery({
-    queryKey: ["auth-user-id"],
-    queryFn: async () => {
-      const { data } = await supabase.auth.getUser();
-      return data.user?.id ?? null;
-    },
-  });
-
-  useEffect(() => {
-    setHidden(loadHiddenBanks());
-  }, []);
-
-  useEffect(() => {
-    if (uid) setPrefs(loadBankPrefs(uid));
-  }, [uid]);
-
-  const platform = getPlatform();
-  const isNative = isNativeContainer();
-  const visibleBanks = BANK_APPS.filter((b) => !hidden.includes(b.id));
-  const listedApps = (deviceApps ?? []).filter((a) => showAllApps || a.financial);
+  const qc = useQueryClient();
+  const [step, setStep] = useState<"start" | "method" | "ask">("start");
+  const [current, setCurrent] = useState<string | null>(null);
 
   const { data: payments = [] } = useQuery({
     queryKey: ["payments"],
@@ -121,126 +37,59 @@ function PagarCompra() {
     },
   });
 
-  async function handleOpenBank(bank: BankApp) {
-    const res = await openBankApp(bank);
-    if (res.opened) {
-      toast.info(`Abrindo ${bank.name}. Depois volte para registrar o pagamento.`);
-      return;
-    }
-    if (res.reason === "not-native") {
-      toast.error("Disponível apenas no aplicativo instalado no celular.");
-      return;
-    }
-    if (res.reason === "not_configured") {
-      toast.error(`Ainda não há um mecanismo de abertura configurado para ${bank.name}.`);
-      return;
-    }
-    toast.error(
-      `Não foi possível abrir ${bank.name}. O app pode não estar instalado ou não ser compatível com este aparelho.`,
-    );
-  }
+  // Ao voltar do app do banco, perguntar se foi paga
+  useEffect(() => {
+    if (!current) return;
+    const onVis = () => {
+      if (document.visibilityState === "visible") setStep("ask");
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [current]);
 
-  function persistHidden(next: string[]) {
-    setHidden(next);
-    try {
-      localStorage.setItem(HIDDEN_BANKS_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
+  async function payWithPix(retryId?: string) {
+    let id = retryId ?? null;
+    if (!id) {
+      const { data: u } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from("purchase_payments")
+        .insert({ user_id: u.user!.id, method: "pix", status: "pending" })
+        .select("id")
+        .single();
+      if (error) { toast.error("Não foi possível iniciar."); return; }
+      id = data.id;
+      qc.invalidateQueries({ queryKey: ["payments"] });
     }
-  }
-
-  function hideBank(id: string) {
-    persistHidden(Array.from(new Set([...hidden, id])));
-    toast.info("Banco removido da sua lista.");
-  }
-
-  function restoreBanks() {
-    persistHidden([]);
-    toast.success("Bancos removidos foram restaurados.");
-  }
-
-  async function scanApps() {
-    setScanning(true);
-    try {
-      const res = await listDeviceApps();
-      setAppsSupported(res.supported);
-      setDeviceApps(res.apps);
-      if (!res.supported) {
-        toast.info("Este sistema não permite listar os aplicativos instalados.");
-      } else if (res.apps.length === 0) {
-        toast.info("Nenhum aplicativo compatível encontrado no aparelho.");
-      } else {
-        toast.success(`${res.apps.length} aplicativos encontrados no aparelho.`);
+    setCurrent(id);
+    // Abre o seletor nativo do sistema (Android "Abrir com..." / iPhone folha de compartilhamento)
+    const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+    if (nav.share) {
+      try {
+        await nav.share({ title: "Pagar compra com Pix", text: "Pagar compra com Pix" });
+      } catch {
+        /* usuário fechou o seletor */
       }
-    } catch {
-      toast.error("Não foi possível verificar os aplicativos do aparelho.");
-    } finally {
-      setScanning(false);
+    } else {
+      toast.info("Abra o app do seu banco e pague com Pix no caixa.");
     }
+    setStep("ask");
   }
 
-  function persistPrefs(next: BankPrefs) {
-    setPrefs(next);
-    if (uid) saveBankPrefs(uid, next);
+  async function answer(paid: boolean) {
+    if (!current) return;
+    await supabase
+      .from("purchase_payments")
+      .update(paid ? { status: "paid", paid_at: new Date().toISOString() } : { status: "pending" })
+      .eq("id", current);
+    qc.invalidateQueries({ queryKey: ["payments"] });
+    toast[paid ? "success" : "info"](paid ? "Compra marcada como paga." : "Compra mantida como não paga.");
+    setCurrent(null);
+    setStep("start");
   }
 
-  function setDefaultBank(app: DeviceApp) {
-    persistPrefs({ ...prefs, bank: app });
-    toast.success(`${app.name} definido como banco padrão.`);
-  }
-
-  function setDefaultWallet(app: DeviceApp) {
-    persistPrefs({ ...prefs, wallet: app });
-    toast.success(`${app.name} definido como carteira digital.`);
-  }
-
-  function clearDefaultBank() {
-    persistPrefs({ ...prefs, bank: null });
-  }
-
-  function clearDefaultWallet() {
-    persistPrefs({ ...prefs, wallet: null });
-  }
-
-  async function handleOpenDeviceApp(app: DeviceApp) {
-    const res = await openDeviceApp(app.package);
-    if (res.opened) {
-      toast.info(`Abrindo ${app.name}. Depois volte para registrar o pagamento.`);
-      return;
-    }
-    if (res.reason === "not-native") {
-      toast.error("Disponível apenas no aplicativo instalado no celular.");
-      return;
-    }
-    if (res.reason === "not_installed") {
-      toast.error(`${app.name} não está mais instalado neste aparelho. Escolha outra opção.`);
-      return;
-    }
-    toast.error(`Não foi possível abrir ${app.name}. Selecione outra opção.`);
-  }
-
-  async function finalize() {
-    try {
-      const res = await confirm.mutateAsync();
-      setResult(res);
-      setStep("done");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível registrar a compra.");
-    }
-  }
-
-  function answer(paid: boolean) {
-    if (!paid) {
-      toast.info("Compra mantida como não paga.");
-      setStep("start");
-      return;
-    }
-    void finalize();
-  }
-
-  const paidPayments = payments.filter((p) => p.status === "paid");
+  const paid = payments.filter((p) => p.status === "paid");
+  const pending = payments.filter((p) => p.status !== "paid");
   const fmt = (d: string) => new Date(d).toLocaleString("pt-BR");
-  const canPay = preview.itemsCount > 0;
 
   return (
     <div className="space-y-5">
@@ -248,356 +97,69 @@ function PagarCompra() {
         <Wallet className="size-5 text-accent" /> Pagar compra
       </h1>
 
-      <section className="glass space-y-2 p-4">
-        <p className="text-sm font-semibold">Compra atual</p>
-        {canPay ? (
-          <p className="text-sm text-muted-foreground">
-            {preview.itemsCount} {preview.itemsCount === 1 ? "produto" : "produtos"} para registrar.
-            O valor você confere no caixa; a economia aparece no menu Economia.
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Sua lista está vazia. Adicione produtos no menu Lista para registrar a compra.
-          </p>
+      <section className="glass space-y-3 p-4">
+        {step === "start" && (
+          <>
+            <p className="text-sm text-muted-foreground">
+              O valor é definido no caixa. O CompensAI não mostra, calcula nem envia valores.
+            </p>
+            <Button className="w-full" onClick={() => setStep("method")}>Pagar compra</Button>
+          </>
         )}
+        {step === "method" && (
+          <>
+            <p className="text-sm font-semibold">Escolha a forma de pagamento</p>
+            <Button className="w-full" onClick={() => payWithPix()}>
+              <QrCode className="mr-2 size-4" /> Pix
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Vai abrir o seletor do seu celular para você escolher o app do banco.
+            </p>
+            <Button variant="ghost" className="w-full" onClick={() => setStep("start")}>Voltar</Button>
+          </>
+        )}
+        {step === "ask" && (
+          <>
+            <p className="text-center text-lg font-bold">A compra foi paga?</p>
+            <Button className="w-full" onClick={() => answer(true)}>
+              <CheckCircle2 className="mr-2 size-4" /> SIM, FOI PAGA
+            </Button>
+            <Button variant="outline" className="w-full" onClick={() => answer(false)}>
+              <XCircle className="mr-2 size-4" /> NÃO, NÃO FOI PAGA
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Essa confirmação é feita por você, não pelo banco.
+            </p>
+          </>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Nunca pedimos senhas, logins ou dados bancários.
+        </p>
       </section>
 
-      {step !== "done" && (
-        <section className="glass space-y-3 p-4">
-          {step === "start" && (
-            <>
-              <p className="text-sm text-muted-foreground">
-                Registre esta compra para guardá-la no seu histórico. O valor é conferido no caixa e
-                a economia aparece no menu Economia.
-              </p>
-              <Button
-                className="h-12 w-full"
-                size="lg"
-                disabled={!canPay}
-                onClick={() => setStep("info")}
-              >
-                <span className="inline-flex items-center justify-center gap-2">
-                  <Wallet className="size-4 shrink-0" />
-                  <span>Pagar e registrar compra</span>
-                </span>
-              </Button>
-            </>
-          )}
-
-          {step === "info" && (
-            <>
-              <p className="flex items-center gap-2 text-sm font-semibold">
-                <Smartphone className="size-4 text-primary" /> Pagar pelo app do seu banco
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Escolha o banco ou carteira abaixo. O app será aberto para você pagar; depois volte
-                para registrar o pagamento.
-              </p>
-
-              {visibleBanks.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Você removeu todos os bancos da sua lista. Use “Restaurar” abaixo para trazê-los
-                  de volta.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {visibleBanks.map((bank) => (
-                    <li key={bank.id} className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleOpenBank(bank)}
-                        className="flex h-11 flex-1 items-center gap-3 rounded-lg border border-border bg-card/40 px-3 text-left transition-colors hover:bg-accent/10 active:scale-[0.99]"
-                      >
-                        <img
-                          src={bank.icon}
-                          alt=""
-                          width={32}
-                          height={32}
-                          loading="lazy"
-                          className="size-8 shrink-0 rounded-md object-contain"
-                        />
-                        <span className="flex-1 text-sm font-medium">{bank.name}</span>
-                        <span className="text-xs text-muted-foreground">Abrir</span>
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => hideBank(bank.id)}
-                        aria-label={`Remover ${bank.name}`}
-                        className="h-11 w-11 shrink-0 p-0"
-                      >
-                        <X className="size-4 text-muted-foreground" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {hidden.length > 0 && (
-                <Button variant="outline" className="w-full" onClick={restoreBanks}>
-                  <RotateCcw className="mr-2 size-4" /> Restaurar bancos removidos ({hidden.length})
+      {pending.length > 0 && (
+        <section className="glass p-4">
+          <p className="mb-2 text-sm font-semibold">Pendentes / não pagas</p>
+          <ul className="divide-y divide-border">
+            {pending.map((p) => (
+              <li key={p.id} className="flex items-center justify-between py-2 text-sm">
+                <span>{fmt(p.created_at)}</span>
+                <Button size="sm" variant="outline" onClick={() => payWithPix(p.id)}>
+                  <RotateCcw className="mr-1 size-3.5" /> Tentar de novo
                 </Button>
-              )}
-
-              {!isNative && (
-                <p className="text-xs text-muted-foreground">{platformHint(platform)}</p>
-              )}
-
-              <div className="space-y-2 rounded-xl border border-border bg-card/40 p-3">
-                <p className="flex items-center gap-2 text-sm font-semibold">
-                  <Smartphone className="size-4 text-primary" /> Apps no seu aparelho
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Verificação real dos aplicativos instalados. Escolha um banco padrão e uma
-                  carteira digital — são escolhas independentes.
-                </p>
-
-                {!isNative ? (
-                  <p className="text-xs text-muted-foreground">
-                    A verificação dos apps instalados funciona apenas no aplicativo Android do
-                    CompensAI. No navegador/PWA o sistema não permite listar os apps instalados.
-                  </p>
-                ) : (
-                  <>
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      disabled={scanning}
-                      onClick={() => void scanApps()}
-                    >
-                      <RefreshCw
-                        className={scanning ? "mr-2 size-4 animate-spin" : "mr-2 size-4"}
-                      />
-                      {deviceApps ? "Verificar novamente" : "Ver apps do dispositivo"}
-                    </Button>
-
-                    {deviceApps && !appsSupported && (
-                      <p className="text-xs text-muted-foreground">
-                        Este sistema não permite listar os aplicativos instalados.
-                      </p>
-                    )}
-
-                    {deviceApps && appsSupported && (
-                      <>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>
-                            {listedApps.length} de {deviceApps.length} aplicativos
-                          </span>
-                          <button
-                            type="button"
-                            className="underline"
-                            onClick={() => setShowAllApps((v) => !v)}
-                          >
-                            {showAllApps ? "Mostrar só bancos/carteiras" : "Mostrar todos os apps"}
-                          </button>
-                        </div>
-
-                        {listedApps.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">
-                            Nenhum aplicativo bancário ou carteira digital encontrado.
-                          </p>
-                        ) : (
-                          <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
-                            {listedApps.map((app) => (
-                              <li
-                                key={app.package}
-                                className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-2 py-1.5"
-                              >
-                                {app.icon ? (
-                                  <img
-                                    src={app.icon}
-                                    alt=""
-                                    width={28}
-                                    height={28}
-                                    loading="lazy"
-                                    className="size-7 shrink-0 rounded-md object-contain"
-                                  />
-                                ) : (
-                                  <span className="size-7 shrink-0 rounded-md bg-secondary" />
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-sm font-medium">{app.name}</p>
-                                  <p className="text-[10px] uppercase text-muted-foreground">
-                                    {categoryLabel(app.category)}
-                                  </p>
-                                </div>
-                                <Button
-                                  variant="ghost"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => setDefaultBank(app)}
-                                >
-                                  Banco
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  className="h-8 px-2 text-xs"
-                                  onClick={() => setDefaultWallet(app)}
-                                >
-                                  Carteira
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  className="h-8 w-8 p-0"
-                                  aria-label={`Abrir ${app.name}`}
-                                  onClick={() => void handleOpenDeviceApp(app)}
-                                >
-                                  <ExternalLink className="size-4" />
-                                </Button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </>
-                    )}
-
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-background/40 p-2">
-                        <p className="text-xs text-muted-foreground">Banco padrão</p>
-                        {prefs.bank ? (
-                          <>
-                            <p className="flex items-center gap-2 text-sm font-medium">
-                              {prefs.bank.icon && (
-                                <img
-                                  src={prefs.bank.icon}
-                                  alt=""
-                                  className="size-5 shrink-0 rounded"
-                                />
-                              )}
-                              <span className="truncate">{prefs.bank.name}</span>
-                            </p>
-                            <div className="mt-1 flex gap-1">
-                              <Button
-                                size="sm"
-                                className="h-8"
-                                onClick={() => void handleOpenDeviceApp(prefs.bank as DeviceApp)}
-                              >
-                                Abrir banco
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8"
-                                onClick={clearDefaultBank}
-                              >
-                                Alterar
-                              </Button>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Nenhum escolhido.</p>
-                        )}
-                      </div>
-
-                      <div className="rounded-lg border border-border bg-background/40 p-2">
-                        <p className="text-xs text-muted-foreground">Carteira digital</p>
-                        {prefs.wallet ? (
-                          <>
-                            <p className="flex items-center gap-2 text-sm font-medium">
-                              {prefs.wallet.icon && (
-                                <img
-                                  src={prefs.wallet.icon}
-                                  alt=""
-                                  className="size-5 shrink-0 rounded"
-                                />
-                              )}
-                              <span className="truncate">{prefs.wallet.name}</span>
-                            </p>
-                            <div className="mt-1 flex gap-1">
-                              <Button
-                                size="sm"
-                                className="h-8"
-                                onClick={() => void handleOpenDeviceApp(prefs.wallet as DeviceApp)}
-                              >
-                                Abrir carteira
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-8"
-                                onClick={clearDefaultWallet}
-                              >
-                                Alterar
-                              </Button>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Nenhuma escolhida.</p>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <Button className="w-full" onClick={() => setStep("ask")}>
-                <CheckCircle2 className="mr-2 size-4" /> Já fiz o pagamento
-              </Button>
-
-              <Button variant="ghost" className="w-full" onClick={() => setStep("start")}>
-                Voltar
-              </Button>
-            </>
-          )}
-
-          {step === "ask" && (
-            <>
-              <p className="text-center text-lg font-bold">A compra foi paga?</p>
-              <p className="rounded-xl bg-secondary/60 p-3 text-sm">
-                Vamos registrar <b>{preview.itemsCount}</b>{" "}
-                {preview.itemsCount === 1 ? "produto" : "produtos"} desta compra.
-              </p>
-              <Button className="w-full" onClick={() => answer(true)} disabled={confirm.isPending}>
-                {confirm.isPending ? "Registrando…" : "SIM, FOI PAGA"}
-              </Button>
-              <Button variant="outline" className="w-full" onClick={() => answer(false)}>
-                NÃO FOI PAGA
-              </Button>
-            </>
-          )}
-
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <ShieldCheck className="size-3.5 shrink-0 text-primary" /> A confirmação é manual; o
-            CompensAI não acessa seu banco nem envia valores.
-          </p>
-        </section>
-      )}
-
-      {step === "done" && result && (
-        <section className="glass glow space-y-3 p-4">
-          <p className="flex items-center gap-2 text-lg font-bold text-success">
-            <CheckCircle2 className="size-5" /> Compra registrada
-          </p>
-
-          <p className="text-sm text-muted-foreground">
-            {result.summary.itemsCount}{" "}
-            {result.summary.itemsCount === 1 ? "produto registrado" : "produtos registrados"} no seu
-            histórico.
-          </p>
-
-          <p className="rounded-xl bg-secondary/60 p-3 text-sm text-muted-foreground">
-            Sua economia nesta compra aparece no menu Economia.
-          </p>
-
-          <Button
-            className="w-full"
-            variant="outline"
-            onClick={() => {
-              setResult(null);
-              setStep("start");
-            }}
-          >
-            Concluir
-          </Button>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
       <section className="glass p-4">
-        <p className="mb-2 text-sm font-semibold">Compras pagas</p>
-        {paidPayments.length === 0 ? (
+        <p className="mb-2 text-sm font-semibold">Compras Pagas</p>
+        {paid.length === 0 ? (
           <p className="text-xs text-muted-foreground">Nenhuma compra paga ainda.</p>
         ) : (
           <ul className="divide-y divide-border">
-            {paidPayments.slice(0, 10).map((p) => (
+            {paid.map((p) => (
               <li key={p.id} className="flex items-center justify-between py-2 text-sm">
                 <span>Paga em {fmt(p.paid_at ?? p.created_at)}</span>
                 <CheckCircle2 className="size-4 text-success" />

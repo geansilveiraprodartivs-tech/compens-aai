@@ -51,10 +51,7 @@ export const analyzeProductPhoto = createServerFn({ method: "POST" })
   .inputValidator((d) =>
     z.object({ image: z.string().startsWith("data:image/").max(8_000_000) }).parse(d),
   )
-  .handler(async ({ data, context }): Promise<PhotoProduct> => {
-    const { assertPremium } = await import("@/lib/entitlement.server");
-    await assertPremium(context.userId);
-
+  .handler(async ({ data }): Promise<PhotoProduct> => {
     const key = process.env["LOVABLE_API_KEY"];
     if (!key) throw new Error("IA não configurada.");
     const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
