@@ -56,7 +56,7 @@ function PagarCompra() {
         .insert({ user_id: u.user!.id, method: "pix", status: "pending" })
         .select("id")
         .single();
-      if (error) return toast.error("Não foi possível iniciar.");
+      if (error) { toast.error("Não foi possível iniciar."); return; }
       id = data.id;
       qc.invalidateQueries({ queryKey: ["payments"] });
     }

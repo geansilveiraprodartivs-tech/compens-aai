@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
+import { AvatarEditor } from "@/components/AvatarEditor";
 
 export const Route = createFileRoute("/_authenticated/perfil")({
   head: () => ({
@@ -52,7 +53,7 @@ function PerfilPage() {
         <User className="size-5 text-accent" /> Perfil
       </h1>
 
-      <AvatarEditor path={profile?.avatar_url ?? null} userId={profile?.id} onSaved={(p) => update.mutateAsync({ avatar_url: p })} />
+      <AvatarEditor path={profile?.avatar_url ?? null} userId={profile?.id} onSaved={(p: string) => update.mutateAsync({ avatar_url: p })} />
 
 
       <section className="glass p-4">
