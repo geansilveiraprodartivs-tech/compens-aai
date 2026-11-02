@@ -12,6 +12,8 @@ import {
   sanitizeNutrients,
   sourceMentionsProduct,
   textConfirmsEnergy,
+  textOf,
+  toNumber,
   unknownAnalysis,
   type AiFoodPayload,
   type FoodAnalysis,
@@ -51,7 +53,18 @@ const VERIFY_TIMEOUT_MS = 9_000;
 const NUTRIENTS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["kcal", "carbs", "protein", "fat", "sat_fat", "trans_fat", "fiber", "sugar", "sodium"],
+  required: [
+    "kcal",
+    "carbs",
+    "protein",
+    "fat",
+    "sat_fat",
+    "trans_fat",
+    "fiber",
+    "sugar",
+    "added_sugar",
+    "sodium",
+  ],
   properties: {
     kcal: { type: ["number", "null"] },
     carbs: { type: ["number", "null"] },
@@ -61,6 +74,7 @@ const NUTRIENTS_SCHEMA = {
     trans_fat: { type: ["number", "null"] },
     fiber: { type: ["number", "null"] },
     sugar: { type: ["number", "null"] },
+    added_sugar: { type: ["number", "null"] },
     sodium: { type: ["number", "null"] },
   },
 } as const;
@@ -84,6 +98,7 @@ const IDENTIFY_SCHEMA = {
     "serving_size_text",
     "serving_grams",
     "ingredients",
+    "allergens",
     "better_choices",
     "balance_tips",
     "problem",
@@ -105,6 +120,8 @@ const IDENTIFY_SCHEMA = {
     serving_size_text: { type: ["string", "null"] },
     serving_grams: { type: ["number", "null"] },
     ingredients: { type: ["string", "null"] },
+    /** Alergênicos escritos na embalagem ("ALÉRGICOS: ..."), só transcrição. */
+    allergens: { type: ["string", "null"] },
     better_choices: {
       type: "array",
       items: {
@@ -132,6 +149,7 @@ const RESEARCH_SCHEMA = {
     "nutrients",
     "serving_size",
     "serving_grams",
+    "allergens",
     "note",
   ],
   properties: {
@@ -143,6 +161,7 @@ const RESEARCH_SCHEMA = {
     nutrients: NUTRIENTS_SCHEMA,
     serving_size: { type: ["string", "null"] },
     serving_grams: { type: ["number", "null"] },
+    allergens: { type: ["string", "null"] },
     note: { type: ["string", "null"] },
   },
 } as const;
@@ -160,11 +179,13 @@ TAREFA 1 — IDENTIFICAR (o mais importante):
 - Se NÃO for possível identificar o produto com segurança: "ok" = false, "name" = "", e escreva em "problem" um pedido curto para o usuário (ex.: "A foto está escura. Tente outra mais nítida ou informe o nome e a marca.").
 
 TAREFA 2 — TRANSCREVER O RÓTULO (se estiver legível):
-- Se a tabela nutricional aparecer na foto, copie os valores POR 100 g / 100 ml: energia, carboidratos, proteínas, gorduras totais, saturadas, trans, fibras, açúcares e sódio (em mg).
+- Se a tabela nutricional aparecer na foto, copie os valores POR 100 g / 100 ml: energia, carboidratos, proteínas, gorduras totais, saturadas, trans, fibras, açúcares totais, açúcares adicionados e sódio (em mg).
+- "added_sugar" é só o que o rótulo chama de "açúcares adicionados"; se a embalagem não separar, use null (nunca deduza subtraindo).
 - "label_read" = true apenas quando você conseguiu ler a tabela na foto.
 - Se a tabela estiver cortada, ilegível, de outro ângulo ou ausente: "label_read" = false e TODOS os campos de "label" = null.
 - NUNCA deduza números do rótulo por conhecer a marca. Só transcreva o que está visível.
 - "ingredients": transcreva a lista de ingredientes apenas se legível; senão null.
+- "allergens": transcreva apenas a declaração de alergênicos escrita na embalagem (ex.: "Contém leite e soja", "Pode conter amendoim"). Se não houver essa declaração legível, use null. Nunca deduza alergênicos a partir dos ingredientes.
 
 TAREFA 3 — PORÇÃO DE REFERÊNCIA:
 - "serving_size_text" e "serving_grams": porção usual (ex.: "1 fatia"/30, "1 copo"/200, "1 unidade média"/130). Para bebidas use ml. Sem noção de porção: 100.
@@ -186,14 +207,19 @@ Você recebe um alimento/produto já identificado. Pesquise na web os valores nu
 
 Prioridade das fontes:
 1. site oficial do fabricante ou da marca;
-2. tabela oficial de composição de alimentos (TBCA/USP, TACO/Unicamp, USDA FoodData Central);
-3. bases de dados nutricionais reconhecidas (Open Food Facts, Nutritionix, FatSecret).
+2. página/ficha técnica oficial do produto;
+3. tabela oficial de composição de alimentos (TBCA/USP, TACO/Unicamp, USDA FoodData Central);
+4. bases de dados nutricionais reconhecidas (Open Food Facts, Nutritionix, FatSecret);
+5. outras fontes verificáveis, apenas se as anteriores não tiverem o item.
 
 Regras obrigatórias:
 - Só informe números que estejam escritos na página que você consultou.
 - "source_url" deve ser a URL exata da página onde encontrou a tabela nutricional.
 - "source_name" é o nome do site (ex.: "Nestlé Brasil", "TBCA - USP", "USDA FoodData Central").
+- Use o código de barras, marca, nome, versão/sabor e tamanho da embalagem para confirmar que a página é DESTE produto. Nomes parecidos não bastam.
 - Se a página for de OUTRA versão/sabor do produto, preencha "product_name" com o nome exato dela e explique em "note".
+- "allergens": copie só se a página declarar os alergênicos deste produto; senão null. Nunca deduza dos ingredientes.
+- "added_sugar": só se a página separar açúcares adicionados dos totais; senão null.
 - NUNCA estime, arredonde "por conta própria" ou use valores de um produto parecido como se fossem deste.
 - Se não encontrar fonte confiável com os valores deste item específico: "found" = false, todos os nutrientes = null e o resto = null.
 - Nunca informe 0 kcal sem que a fonte diga 0 kcal.
@@ -378,7 +404,7 @@ async function identifyFood({ image, hint }: IdentifyOptions): Promise<AiFoodPay
   }
 
   const parsed = parseJson(result.text);
-  if (!parsed || typeof parsed !== "object") {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
       ok: false,
       problem: "Não consegui entender o resultado da análise. Tente outra foto.",
@@ -399,18 +425,25 @@ const OFF_FIELDS = [
   "serving_quantity",
   "ingredients_text_pt",
   "ingredients_text",
+  "allergens",
 ].join(",");
 
+/**
+ * Formato bruto do Open Food Facts. Os campos são `unknown` de propósito: a
+ * base pública devolve número, lista ou objeto em campos que deveriam ser
+ * texto, e era exatamente aí que a análise quebrava.
+ */
 type OffProduct = {
-  code?: string;
-  product_name?: string;
-  product_name_pt?: string;
-  brands?: string;
-  nutriments?: Record<string, unknown>;
-  serving_size?: string;
-  serving_quantity?: number | string;
-  ingredients_text_pt?: string;
-  ingredients_text?: string;
+  code?: unknown;
+  product_name?: unknown;
+  product_name_pt?: unknown;
+  brands?: unknown;
+  nutriments?: unknown;
+  serving_size?: unknown;
+  serving_quantity?: unknown;
+  ingredients_text_pt?: unknown;
+  ingredients_text?: unknown;
+  allergens?: unknown;
 };
 
 async function offFetch(url: string, timeoutMs: number): Promise<unknown | null> {
@@ -431,33 +464,42 @@ async function offFetch(url: string, timeoutMs: number): Promise<unknown | null>
 }
 
 function toOffMatch(product: OffProduct, nutrients: Nutrients): OffMatch {
-  const quantity = Number(product.serving_quantity);
   return {
     nutrients,
-    name: cleanText(product.product_name_pt || product.product_name, 120),
-    brands: cleanText(product.brands, 60),
-    code: cleanText(product.code, 20),
-    servingSize: cleanText(product.serving_size, 40),
-    servingQuantity: Number.isFinite(quantity) && quantity > 0 ? quantity : null,
-    ingredients: cleanText(product.ingredients_text_pt || product.ingredients_text, 600),
+    name: textOf(product.product_name_pt, 120) ?? textOf(product.product_name, 120) ?? null,
+    brands: textOf(product.brands, 60),
+    code: textOf(product.code, 20),
+    servingSize: textOf(product.serving_size, 40),
+    servingQuantity: toNumber(product.serving_quantity),
+    ingredients: textOf(product.ingredients_text_pt, 600) ?? textOf(product.ingredients_text, 600),
+    allergens: textOf(product.allergens, 300),
   };
 }
 
 /** Escolhe o candidato mais parecido, exigindo marca compatível quando informada. */
 function pickOffCandidate(
-  products: OffProduct[],
-  wanted: { name: string; brand: string | null },
-  barcode: string | null,
+  products: unknown,
+  wanted: { name: unknown; brand: unknown },
+  barcode: unknown,
 ): OffMatch | null {
-  const brandKey = wanted.brand ? normalizeText(wanted.brand) : "";
+  const list = Array.isArray(products)
+    ? products.filter((item): item is OffProduct => !!item && typeof item === "object")
+    : [];
+  if (list.length === 0) return null;
 
-  const scored = products
+  const nameText = textOf(wanted.name, 120) ?? "";
+  const brandKey = normalizeText(wanted.brand);
+  const code = textOf(barcode, 24);
+  if (!nameText && !code) return null;
+
+  const scored = list
     .map((product) => {
-      const offName = (product.product_name_pt || product.product_name || "").trim();
-      const offBrands = normalizeText(product.brands ?? "");
-      const nutrients = nutrientsFromOpenFoodFacts(product.nutriments ?? {});
-      const byBarcode = !!barcode && product.code === barcode;
-      const score = byBarcode ? 1 : nameMatchScore(wanted.name, offName);
+      const offName =
+        textOf(product.product_name_pt, 120) ?? textOf(product.product_name, 120) ?? "";
+      const offBrands = normalizeText(product.brands);
+      const nutrients = nutrientsFromOpenFoodFacts(product.nutriments);
+      const byBarcode = !!code && textOf(product.code, 24) === code;
+      const score = byBarcode ? 1 : nameMatchScore(nameText, offName);
       const brandOk =
         !brandKey || offBrands.includes(brandKey) || nameMatchScore(brandKey, offBrands) >= 0.6;
       return { product, nutrients, score, byBarcode, brandOk };
@@ -474,11 +516,11 @@ function pickOffCandidate(
 }
 
 async function lookupOpenFoodFacts(wanted: {
-  name: string;
-  brand: string | null;
-  barcode: string | null;
+  name: unknown;
+  brand: unknown;
+  barcode: unknown;
 }): Promise<OffMatch | null> {
-  const digits = (wanted.barcode ?? "").replace(/\D/g, "");
+  const digits = (textOf(wanted.barcode, 32) ?? "").replace(/\D/g, "");
   const deadline = Date.now() + OFF_BUDGET_MS;
   const remaining = () => deadline - Date.now();
 
@@ -486,29 +528,31 @@ async function lookupOpenFoodFacts(wanted: {
     const data = (await offFetch(
       `https://world.openfoodfacts.org/api/v2/product/${digits}.json?fields=${OFF_FIELDS}`,
       remaining(),
-    )) as { status?: number; product?: OffProduct } | null;
-    if (data?.status === 1 && data.product) {
-      const nutrients = nutrientsFromOpenFoodFacts(data.product.nutriments ?? {});
+    )) as { status?: unknown; product?: OffProduct } | null;
+    if (data && data.status === 1 && data.product && typeof data.product === "object") {
+      const nutrients = nutrientsFromOpenFoodFacts(data.product.nutriments);
       if (hasNutrition(nutrients)) return toOffMatch(data.product, nutrients);
     }
   }
 
-  const query = normalizeText([wanted.brand, wanted.name].filter(Boolean).join(" "));
+  const query = normalizeText(
+    [textOf(wanted.brand, 60), textOf(wanted.name, 120)].filter(Boolean).join(" "),
+  );
   if (query.length < 3) return null;
 
   const modern = (await offFetch(
     `https://search.openfoodfacts.org/search?q=${encodeURIComponent(query)}&page_size=15&fields=${OFF_FIELDS}`,
     remaining(),
-  )) as { hits?: OffProduct[] } | null;
-  const modernMatch = pickOffCandidate(modern?.hits ?? [], wanted, digits || null);
+  )) as { hits?: unknown } | null;
+  const modernMatch = pickOffCandidate(modern?.hits, wanted, digits || null);
   if (modernMatch) return modernMatch;
 
   const legacy = (await offFetch(
     `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}` +
       `&search_simple=1&action=process&json=1&page_size=15&fields=${OFF_FIELDS}`,
     remaining(),
-  )) as { products?: OffProduct[] } | null;
-  return pickOffCandidate(legacy?.products ?? [], wanted, digits || null);
+  )) as { products?: unknown } | null;
+  return pickOffCandidate(legacy?.products, wanted, digits || null);
 }
 
 /* -------------------------------------------- pesquisa web + verificação */
@@ -523,27 +567,31 @@ type ResearchTarget = {
 
 type ResearchPayload = {
   found?: boolean;
-  product_name?: string | null;
-  source_name?: string | null;
-  source_url?: string | null;
-  basis?: string | null;
-  nutrients?: Partial<Nutrients> | null;
-  serving_size?: string | null;
-  serving_grams?: number | null;
-  note?: string | null;
+  product_name?: unknown;
+  source_name?: unknown;
+  source_url?: unknown;
+  basis?: unknown;
+  nutrients?: unknown;
+  serving_size?: unknown;
+  serving_grams?: unknown;
+  allergens?: unknown;
+  note?: unknown;
 };
 
 /**
  * Baixa a página citada e confere: respondeu 200, fala de energia/calorias com
  * o número informado e menciona o produto. Sem isso, a fonte é descartada.
+ * Recebe `unknown` porque a URL e o número vêm do JSON da IA.
  */
 async function verifyWebSource(
-  url: string,
-  productName: string,
-  kcal: number | null,
+  url: unknown,
+  productName: unknown,
+  kcal: unknown,
 ): Promise<boolean> {
+  const target = textOf(url, 500);
+  if (!target || !/^https?:\/\//i.test(target)) return false;
   try {
-    const res = await fetch(url, {
+    const res = await fetch(target, {
       redirect: "follow",
       headers: {
         Accept: "text/html,application/xhtml+xml",
@@ -575,10 +623,10 @@ async function researchWeb(target: ResearchTarget): Promise<WebMatch | null> {
   if (!key) return null;
 
   const description = [
-    `Produto: ${target.name}`,
-    target.brand ? `Marca: ${target.brand}` : null,
-    target.variant ? `Versão/sabor: ${target.variant}` : null,
-    target.category ? `Categoria: ${target.category}` : null,
+    `Produto: ${textOf(target.name, 120) ?? ""}`,
+    target.brand ? `Marca: ${textOf(target.brand, 60) ?? ""}` : null,
+    target.variant ? `Versão/sabor: ${textOf(target.variant, 40) ?? ""}` : null,
+    target.category ? `Categoria: ${textOf(target.category, 50) ?? ""}` : null,
     target.packaged === false
       ? "É um alimento natural ou preparado, sem embalagem de marca."
       : "É um produto embalado.",
@@ -609,28 +657,35 @@ async function researchWeb(target: ResearchTarget): Promise<WebMatch | null> {
   if (!result.ok) return null;
 
   const parsed = parseJson(result.text) as ResearchPayload | null;
-  if (!parsed || parsed.found !== true) return null;
+  if (!parsed || typeof parsed !== "object" || parsed.found !== true) return null;
 
-  const url = cleanText(parsed.source_url, 400);
+  const url = textOf(parsed.source_url, 500);
   if (!url || !/^https?:\/\//i.test(url)) return null;
 
-  const nutrients = sanitizeNutrients(parsed.nutrients ?? {});
+  const nutrients = sanitizeNutrients(parsed.nutrients);
   if (!hasNutrition(nutrients)) return null;
 
-  const productName = cleanText(parsed.product_name, 120) ?? target.name;
+  const productName = textOf(parsed.product_name, 120) ?? target.name;
   const verified = await verifyWebSource(url, productName, nutrients.kcal);
   if (!verified) return null;
 
-  const servingGrams = Number(parsed.serving_grams);
+  const hostname = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  })();
 
   return {
-    sourceName: cleanText(parsed.source_name, 80) ?? new URL(url).hostname,
+    sourceName: textOf(parsed.source_name, 80) ?? hostname ?? "Página na internet",
     sourceUrl: url,
     productName,
     nutrients,
-    servingSize: cleanText(parsed.serving_size, 40),
-    servingGrams: Number.isFinite(servingGrams) && servingGrams > 0 ? servingGrams : null,
+    servingSize: textOf(parsed.serving_size, 40),
+    servingGrams: toNumber(parsed.serving_grams),
     ingredients: null,
+    allergens: textOf(parsed.allergens, 300),
   };
 }
 
@@ -669,7 +724,7 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
       off = await lookupOpenFoodFacts({
         name,
         brand,
-        barcode: cleanText(payload.barcode, 32),
+        barcode: textOf(payload.barcode, 32),
       });
       if (!off) {
         web = await researchWeb({

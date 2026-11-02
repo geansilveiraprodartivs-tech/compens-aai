@@ -26,6 +26,8 @@ import {
   historyKey,
   historySummary,
   nameMatchScore,
+  nameTokens,
+  normalizeText,
   nutrientsFromOpenFoodFacts,
   pageToText,
   readGoal,
@@ -35,6 +37,7 @@ import {
   scaleNutrients,
   sourceMentionsProduct,
   textConfirmsEnergy,
+  textOf,
   toNumber,
   writeGoal,
   type AiFoodPayload,
@@ -95,6 +98,7 @@ check(
     trans_fat: null,
     fiber: null,
     sugar: null,
+    added_sugar: null,
     sodium: 320,
   },
 );
@@ -111,6 +115,7 @@ check(
     trans_fat: null,
     fiber: null,
     sugar: null,
+    added_sugar: null,
     sodium: null,
   },
 );
@@ -166,6 +171,7 @@ check(
     trans_fat: 0,
     fiber: null,
     sugar: 4,
+    added_sugar: null,
     sodium: 450,
   },
 );
@@ -228,6 +234,7 @@ const labelNutrients = {
   trans_fat: 0,
   fiber: 4.2,
   sugar: 12.3,
+  added_sugar: 5.4,
   sodium: 312,
 };
 
@@ -238,6 +245,7 @@ const offMatch: OffMatch = {
   servingSize: "20 g",
   servingQuantity: 20,
   ingredients: "Açúcar, cacau, maltodextrina.",
+  allergens: "Contém leite. Pode conter soja.",
   nutrients: sanitizeNutrients({
     kcal: 380,
     carbs: 84,
@@ -247,6 +255,7 @@ const offMatch: OffMatch = {
     trans_fat: 0,
     fiber: 3,
     sugar: 80,
+    added_sugar: 78,
     sodium: 100,
   }),
 };
@@ -269,6 +278,7 @@ const webMatch: WebMatch = {
   servingSize: "1 unidade média",
   servingGrams: 90,
   ingredients: null,
+  allergens: null,
 };
 
 const basePayload: AiFoodPayload = {
@@ -286,6 +296,7 @@ const basePayload: AiFoodPayload = {
   serving_grams: 30,
   label: labelNutrients,
   ingredients: "Farinha de trigo integral, aveia, açúcar mascavo.",
+  allergens: "Contém trigo, aveia, leite e soja.",
   better_choices: [{ name: "Aveia em flocos", why: "Mais fibra." }],
   balance_tips: ["Combine com uma fruta."],
   problem: null,
@@ -366,26 +377,19 @@ ok(
   typeof outraVersao.source_note === "string" && outraVersao.source_note.includes("Banana nanica"),
 );
 
-const semFonte = composeAnalysis(
-  { ...semRotulo, problem: null },
-  {},
-  "lose",
-);
+const semFonte = composeAnalysis({ ...semRotulo, problem: null }, {}, "lose");
 check("sem dados: origem desconhecida", semFonte.origin, "unknown");
 check("sem dados: nenhum valor inventado", semFonte.per100, EMPTY_NUTRIENTS);
 check("sem dados: porção sem valores", semFonte.portion.nutrients, EMPTY_NUTRIENTS);
 ok(
   "sem dados: explica que não achou fonte",
-  typeof semFonte.problem === "string" && semFonte.problem.includes("não achei uma fonte confiável"),
+  typeof semFonte.problem === "string" &&
+    semFonte.problem.includes("não achei uma fonte confiável"),
 );
 check("sem dados: veredito neutro", semFonte.fit.verdict, "balanced");
 check("sem dados: nenhum ponto positivo", semFonte.benefits, []);
 
-const nada = composeAnalysis(
-  { ...semRotulo, label: {}, problem: "Tabela ilegível." },
-  {},
-  "lose",
-);
+const nada = composeAnalysis({ ...semRotulo, label: {}, problem: "Tabela ilegível." }, {}, "lose");
 check("sem dados: mensagem da IA preservada", nada.problem, "Tabela ilegível.");
 
 const ilegivel = composeAnalysis(
@@ -400,7 +404,10 @@ check("ilegível: confiança baixa", ilegivel.confidence, "low");
 
 const vazio = composeAnalysis({}, {}, "know");
 check("vazio: ok=false", vazio.ok, false);
-ok("vazio: pede outra foto ou nome e marca", typeof vazio.problem === "string" && vazio.problem.includes("nome e a marca"));
+ok(
+  "vazio: pede outra foto ou nome e marca",
+  typeof vazio.problem === "string" && vazio.problem.includes("nome e a marca"),
+);
 
 const semConfianca = composeAnalysis({ ...basePayload, confidence: "altíssima" }, {}, "know");
 check("confiança: valor inválido vira média", semConfianca.confidence, "medium");
@@ -458,6 +465,7 @@ const parcial = composeAnalysis(
 check("rótulo parcial: origem", parcial.origin, "label");
 check("rótulo parcial: gordura não é preenchida", parcial.per100.fat, null);
 check("rótulo parcial: kcal", parcial.per100.kcal, 120);
+check("rótulo parcial: açúcar adicionado ausente", parcial.per100.added_sugar, null);
 
 const bebidaWeb: WebMatch = {
   sourceName: "Site do fabricante",
@@ -575,6 +583,204 @@ check("resumo do histórico", historySummary(entryA), "79 kcal por porção · L
 
 ok("hasNutrition: vazio", hasNutrition(EMPTY_NUTRIENTS) === false);
 ok("hasNutrition: parcial", hasNutrition({ ...EMPTY_NUTRIENTS, kcal: 10 }) === true);
+check("hasNutrition: entrada não-objeto", hasNutrition(null), false);
+
+/* ------------------------------------------- dados hostis (bug .normalize) */
+
+check("textOf: texto aparado", textOf("  Leite  "), "Leite");
+check("textOf: número", textOf(42), "42");
+check("textOf: número inválido", textOf(Number.NaN), null);
+check("textOf: objeto", textOf({ a: 1 }), null);
+check("textOf: array de textos", textOf(["Leite", "Soja"]), "Leite, Soja");
+check("textOf: array misto", textOf(["Leite", { x: 1 }, null, 2]), "Leite, 2");
+check("textOf: null e undefined", [textOf(null), textOf(undefined)], [null, null]);
+
+check("normalize: null", normalizeText(null), "");
+check("normalize: undefined", normalizeText(undefined), "");
+check("normalize: número", normalizeText(7), "7");
+check("normalize: objeto", normalizeText({ name: "Leite" }), "");
+check("normalize: array", normalizeText(["Açúcar", "Cacau"]), "acucar cacau");
+check("normalize: acento", normalizeText("Açúcar"), "acucar");
+check("nameTokens: objeto", nameTokens({}), []);
+check("nameTokens: número puro", nameTokens(2024), []);
+check("nameMatchScore: entradas não-string", nameMatchScore(42, { a: 1 }), 0);
+ok(
+  "nameMatchScore: array de textos",
+  nameMatchScore(["Leite", "integral"], "leite integral") >= 0.99,
+);
+check("sourceMentionsProduct: texto numérico", sourceMentionsProduct(42, "Leite"), false);
+check("sourceMentionsProduct: nome objeto", sourceMentionsProduct("tem leite", {}), true);
+check("pageToText: número", pageToText(42), "");
+check("pageToText: null", pageToText(null), "");
+check("pageToText: objeto", pageToText({ html: "<p>x</p>" }), "");
+check("textConfirmsEnergy: texto numérico", textConfirmsEnergy(380, 380), false);
+check("textConfirmsEnergy: kcal não numérica", textConfirmsEnergy("380 kcal", "380"), true);
+check("sanitizeNutrients: null", sanitizeNutrients(null), EMPTY_NUTRIENTS);
+check("sanitizeNutrients: array", sanitizeNutrients([1, 2]), EMPTY_NUTRIENTS);
+check("sanitizeNutrients: texto numérico", sanitizeNutrients({ kcal: "152", sugar: "12,5" }), {
+  ...EMPTY_NUTRIENTS,
+  kcal: 152,
+  sugar: 12.5,
+});
+check("nutrientsFromOpenFoodFacts: null", nutrientsFromOpenFoodFacts(null), EMPTY_NUTRIENTS);
+check("nutrientsFromOpenFoodFacts: lista", nutrientsFromOpenFoodFacts([1, 2]), EMPTY_NUTRIENTS);
+check("scaleNutrients: porção em texto", scaleNutrients(per100, "50"), scaleNutrients(per100, 50));
+check("scaleNutrients: per100 inválido", scaleNutrients(null, 50), EMPTY_NUTRIENTS);
+
+const hostil = composeAnalysis(
+  {
+    ok: true,
+    name: "Biscoito integral de aveia",
+    brand: 123 as unknown as string,
+    label_read: true,
+    label: {
+      kcal: "264" as unknown as number,
+      added_sugar: [] as unknown as number,
+      sodium: { g: 1 } as unknown as number,
+    },
+    allergens: ["Trigo", "Leite"] as unknown as string,
+    serving_grams: "30" as unknown as number,
+    ingredients: ["Farinha", "Aveia"] as unknown as string,
+  },
+  {},
+  "know",
+);
+check("hostil: análise conclui", hostil.ok, true);
+check("hostil: kcal em texto convertida", hostil.per100.kcal, 264);
+check("hostil: açúcar adicionado em lista", hostil.per100.added_sugar, null);
+check("hostil: sódio em objeto", hostil.per100.sodium, null);
+check("hostil: alergênicos em lista", hostil.allergens, "Trigo, Leite");
+check("hostil: ingredientes em lista", hostil.ingredients, "Farinha, Aveia");
+check("hostil: marca numérica ignorada", hostil.brand, null);
+check("hostil: porção em texto", hostil.portion.grams, 30);
+
+const offHostil = composeAnalysis(
+  { ...semRotulo, allergens: null },
+  {
+    off: {
+      ...offMatch,
+      name: 123 as unknown as string,
+      brands: ["Nescau", "Nestlé"] as unknown as string,
+      code: 7891000053508 as unknown as string,
+    },
+  },
+  "lose",
+);
+check("OFF hostil: origem", offHostil.origin, "openfoodfacts");
+check(
+  "OFF hostil: nome numérico vira texto na fonte",
+  offHostil.source_name,
+  "123 · Nescau, Nestlé",
+);
+check(
+  "OFF hostil: link com código numérico",
+  offHostil.source_url,
+  "https://world.openfoodfacts.org/product/7891000053508",
+);
+ok("OFF hostil: ressalva de versão", typeof offHostil.source_note === "string");
+check("OFF hostil: alergênicos da base", offHostil.allergens, "Contém leite. Pode conter soja.");
+
+/* ---------------------------------------------- açúcares e alergênicos */
+
+check("rótulo: açúcar adicionado por 100 g", comRotulo.per100.added_sugar, 5.4);
+check("rótulo: açúcar adicionado por porção", comRotulo.portion.nutrients.added_sugar, 1.6);
+check(
+  "rótulo: alergênicos da embalagem",
+  comRotulo.allergens,
+  "Contém trigo, aveia, leite e soja.",
+);
+check("base: açúcar adicionado", comOff.per100.added_sugar, 78);
+check(
+  "OFF: campo added-sugars_100g",
+  nutrientsFromOpenFoodFacts({ "added-sugars_100g": 7.5 }).added_sugar,
+  7.5,
+);
+check(
+  "alergênicos: base entra quando o rótulo não declara",
+  composeAnalysis({ ...semRotulo, allergens: null }, { off: offMatch }, "lose").allergens,
+  "Contém leite. Pode conter soja.",
+);
+check(
+  "alergênicos: nada é inventado sem declaração",
+  composeAnalysis({ ...basePayload, allergens: null }, {}, "lose").allergens,
+  null,
+);
+check(
+  "alergênicos: objeto não vira texto",
+  composeAnalysis({ ...basePayload, allergens: { leite: true } }, {}, "lose").allergens,
+  null,
+);
+
+/* ------------------------------ tamanho de embalagem x porção (cenário 8) */
+
+const pacote90 = composeAnalysis(
+  { ...basePayload, serving_size_text: "1 pacote", serving_grams: 90 },
+  {},
+  "lose",
+);
+check("embalagem: porção de 90 g", pacote90.portion.nutrients.kcal, 238);
+check("embalagem: nome da porção", pacote90.portion.label, "1 pacote");
+check("embalagem: valor por 100 g não muda", pacote90.per100.kcal, 264);
+check("embalagem: 250 g do produto", scaleNutrients(pacote90.per100, 250).kcal, 660);
+check(
+  "embalagem: 100 g = valores de referência",
+  scaleNutrients(pacote90.per100, 100),
+  pacote90.per100,
+);
+
+/* ------------------------------------- fontes divergentes (cenário 9) */
+
+const divergente = composeAnalysis(
+  {
+    ...basePayload,
+    label_read: false,
+    label: {},
+    serving_grams: 30,
+    allergens: null,
+    ingredients: null,
+  },
+  {
+    off: { ...offMatch, nutrients: sanitizeNutrients({ kcal: 380, sugar: 80 }) },
+    web: { ...webMatch, nutrients: sanitizeNutrients({ kcal: 300, sugar: 60 }) },
+  },
+  "lose",
+);
+check("fontes divergentes: base tem prioridade", divergente.origin, "openfoodfacts");
+check("fontes divergentes: não mistura fontes", divergente.per100.kcal, 380);
+check("fontes divergentes: ressalva sobre a versão", typeof divergente.source_note, "string");
+
+const semTabelaSemFonte = composeAnalysis(
+  {
+    ok: true,
+    name: "Bolo caseiro de cenoura",
+    confidence: "low",
+    packaged: false,
+    label_read: false,
+    label: {},
+  },
+  {},
+  "know",
+);
+check("sem tabela e sem fonte: nenhum valor", semTabelaSemFonte.per100, EMPTY_NUTRIENTS);
+check("sem tabela e sem fonte: sem alergênicos", semTabelaSemFonte.allergens, null);
+ok(
+  "sem tabela e sem fonte: avisa que não confirmou",
+  typeof semTabelaSemFonte.problem === "string" &&
+    semTabelaSemFonte.problem.includes("não achei uma fonte confiável"),
+);
+
+const porCodigo = composeAnalysis(
+  {
+    ...semRotulo,
+    name: "Achocolatado em pó",
+    brand: "Nescau",
+    barcode: 7891000053508 as unknown as string,
+  },
+  { off: offMatch },
+  "gain",
+);
+check("código de barras: valores da base", porCodigo.per100.kcal, 380);
+check("código de barras: mesmo nome não gera ressalva", porCodigo.source_note, null);
 
 /* ------------------------------------------------------------------- rótulos */
 

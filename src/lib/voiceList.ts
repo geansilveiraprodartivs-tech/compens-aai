@@ -25,13 +25,19 @@ export type VoiceDraft = {
 };
 
 /** Chave de comparação: sem acentos, minúscula, só letras/números. */
-export function productKey(name: string): string {
+export function productKey(name: unknown): string {
   return fold(name)
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
 
-function fold(text: string): string {
+/**
+ * `unknown` de propósito: nomes vindos de respostas da IA/banco podem chegar
+ * como número ou objeto, e `.normalize` só existe em string.
+ */
+function fold(text: unknown): string {
+  if (typeof text === "number") return Number.isFinite(text) ? fold(String(text)) : "";
+  if (typeof text !== "string") return "";
   return text
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")

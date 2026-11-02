@@ -34,7 +34,10 @@ export type Nutrients = {
   sat_fat: number | null;
   trans_fat: number | null;
   fiber: number | null;
+  /** Açúcares totais. */
   sugar: number | null;
+  /** Açúcares adicionados (rótulo brasileiro separa de "açúcares totais"). */
+  added_sugar: number | null;
   /** Sempre em miligramas. */
   sodium: number | null;
 };
@@ -48,6 +51,7 @@ export const EMPTY_NUTRIENTS: Nutrients = {
   trans_fat: null,
   fiber: null,
   sugar: null,
+  added_sugar: null,
   sodium: null,
 };
 
@@ -126,6 +130,8 @@ export type FoodAnalysis = {
   per100: Nutrients;
   portion: Portion;
   ingredients: string | null;
+  /** Alergênicos declarados no rótulo/fonte. null = não informado. */
+  allergens: string | null;
   benefits: string[];
   cautions: string[];
   fit: { verdict: FitVerdict; reason: string };
@@ -157,6 +163,8 @@ export type AiFoodPayload = {
   serving_size_text?: string | null;
   serving_grams?: number | null;
   ingredients?: string | null;
+  /** Pode vir como texto ("contém leite") ou lista (["leite","soja"]). */
+  allergens?: unknown;
   better_choices?: unknown;
   balance_tips?: unknown;
   problem?: string | null;
@@ -171,6 +179,7 @@ export type OffMatch = {
   servingSize: string | null;
   servingQuantity: number | null;
   ingredients: string | null;
+  allergens: string | null;
 };
 
 /**
@@ -185,6 +194,7 @@ export type WebMatch = {
   servingSize: string | null;
   servingGrams: number | null;
   ingredients: string | null;
+  allergens: string | null;
 };
 
 export type AnalysisSources = {
@@ -197,6 +207,39 @@ export function cleanText(value: unknown, max = 200): string | null {
   const trimmed = value.replace(/\s+/g, " ").trim();
   if (!trimmed) return null;
   return trimmed.slice(0, max);
+}
+
+/**
+ * Texto seguro para dados que chegam de fora (IA, Open Food Facts, JSON).
+ *
+ * Diferente de `cleanText`, aceita os formatos que já apareceram na prática:
+ *  - string: usa como está;
+ *  - número finito: vira o próprio número em texto (código de barras, porção);
+ *  - array de primitivos: itens convertidos e unidos por vírgula (marcas,
+ *    alergênicos e ingredientes às vezes vêm como lista);
+ *  - objeto/booleano/null/undefined: `null` (nunca "[object Object]").
+ *
+ * É a porta de entrada de tudo que depois passa por `normalizeText`.
+ */
+export function textOf(value: unknown, max = 200): string | null {
+  if (typeof value === "string") return cleanText(value, max);
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? cleanText(String(value), max) : null;
+  }
+  if (typeof value === "bigint") return cleanText(String(value), max);
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (typeof item === "number") return Number.isFinite(item) ? String(item) : null;
+        if (typeof item === "bigint") return String(item);
+        return null;
+      })
+      .filter((item): item is string => !!item && item.trim().length > 0);
+    if (parts.length === 0) return null;
+    return cleanText(parts.join(", "), max);
+  }
+  return null;
 }
 
 export function cleanList(value: unknown, max = 4, maxLen = 220): string[] {
@@ -381,7 +424,8 @@ export function composeAnalysis(
   let sourceName: string | null = null;
   let sourceUrl: string | null = null;
   let sourceNote: string | null = null;
-  let ingredients = cleanText(payload.ingredients, 600);
+  let ingredients = textOf(payload.ingredients, 600);
+  let allergens = textOf(payload.allergens, 300);
   let sourceServingSize: string | null = null;
   let sourceServingGrams: number | null = null;
 
@@ -392,29 +436,32 @@ export function composeAnalysis(
   } else if (off && hasNutrition(off.nutrients)) {
     origin = "openfoodfacts";
     per100 = off.nutrients;
-    sourceName = `${off.name ?? "Open Food Facts"}${off.brands ? ` · ${off.brands}` : ""}`.slice(
-      0,
-      120,
-    );
-    sourceUrl = off.code
-      ? `https://world.openfoodfacts.org/product/${off.code}`
+    const offTitle = textOf(off.name, 120) ?? "Open Food Facts";
+    const offBrands = textOf(off.brands, 60);
+    sourceName = (offBrands ? `${offTitle} · ${offBrands}` : offTitle).slice(0, 120);
+    const offCode = textOf(off.code, 30);
+    sourceUrl = offCode
+      ? `https://world.openfoodfacts.org/product/${encodeURIComponent(offCode)}`
       : "https://world.openfoodfacts.org";
-    sourceServingSize = cleanText(off.servingSize, 40);
+    sourceServingSize = textOf(off.servingSize, 40);
     sourceServingGrams = clampPortion(off.servingQuantity);
-    ingredients = ingredients ?? cleanText(off.ingredients, 600);
+    ingredients = ingredients ?? textOf(off.ingredients, 600);
+    allergens = allergens ?? textOf(off.allergens, 300);
     if (off.name && nameMatchScore(name, off.name) < 0.6) {
-      sourceNote = `A ficha encontrada é de “${off.name}”. Confirme se é a mesma versão do produto.`;
+      sourceNote = `A ficha encontrada é de “${offTitle}”. Confirme se é a mesma versão do produto.`;
     }
   } else if (web && hasNutrition(web.nutrients)) {
     origin = "web";
     per100 = web.nutrients;
-    sourceName = cleanText(web.sourceName, 80) ?? "Página na internet";
-    sourceUrl = web.sourceUrl;
-    sourceServingSize = cleanText(web.servingSize, 40);
+    sourceName = textOf(web.sourceName, 80) ?? "Página na internet";
+    sourceUrl = textOf(web.sourceUrl, 500);
+    sourceServingSize = textOf(web.servingSize, 40);
     sourceServingGrams = clampPortion(web.servingGrams);
-    ingredients = ingredients ?? cleanText(web.ingredients, 600);
-    if (web.productName && nameMatchScore(name, web.productName) < 0.6) {
-      sourceNote = `A fonte descreve “${web.productName}”. Os valores podem ser de outra versão.`;
+    ingredients = ingredients ?? textOf(web.ingredients, 600);
+    allergens = allergens ?? textOf(web.allergens, 300);
+    const webName = textOf(web.productName, 120);
+    if (webName && nameMatchScore(name, webName) < 0.6) {
+      sourceNote = `A fonte descreve “${webName}”. Os valores podem ser de outra versão.`;
     }
   }
 
@@ -440,6 +487,7 @@ export function composeAnalysis(
     per100,
     portion,
     ingredients,
+    allergens,
     benefits: deriveBenefits(per100),
     cautions: deriveCautions(per100),
     fit: {
@@ -479,6 +527,7 @@ export function unknownAnalysis(
     per100: { ...EMPTY_NUTRIENTS },
     portion: { label: "100 g", grams: null, nutrients: { ...EMPTY_NUTRIENTS } },
     ingredients: null,
+    allergens: null,
     benefits: [],
     cautions: [],
     fit: {
@@ -522,44 +571,51 @@ function sane(value: number | null, max: number, digits = 1): number | null {
 }
 
 /** Limita valores absurdos (protege contra leitura errada do rótulo). */
-export function sanitizeNutrients(input: Partial<Nutrients>): Nutrients {
+export function sanitizeNutrients(input: unknown): Nutrients {
+  const source = (input && typeof input === "object" ? input : {}) as Partial<Nutrients>;
   return {
-    kcal: sane(input.kcal ?? null, 900, 0),
-    carbs: sane(input.carbs ?? null, 100),
-    protein: sane(input.protein ?? null, 100),
-    fat: sane(input.fat ?? null, 100),
-    sat_fat: sane(input.sat_fat ?? null, 100),
-    trans_fat: sane(input.trans_fat ?? null, 100),
-    fiber: sane(input.fiber ?? null, 100),
-    sugar: sane(input.sugar ?? null, 100),
-    sodium: sane(input.sodium ?? null, 20000, 0),
+    kcal: sane(toNumber(source.kcal), 900, 0),
+    carbs: sane(toNumber(source.carbs), 100),
+    protein: sane(toNumber(source.protein), 100),
+    fat: sane(toNumber(source.fat), 100),
+    sat_fat: sane(toNumber(source.sat_fat), 100),
+    trans_fat: sane(toNumber(source.trans_fat), 100),
+    fiber: sane(toNumber(source.fiber), 100),
+    sugar: sane(toNumber(source.sugar), 100),
+    added_sugar: sane(toNumber(source.added_sugar), 100),
+    sodium: sane(toNumber(source.sodium), 20000, 0),
   };
 }
 
-export function hasNutrition(n: Nutrients): boolean {
-  return Object.values(n).some((value) => value != null);
+export function hasNutrition(n: unknown): boolean {
+  if (!n || typeof n !== "object") return false;
+  return Object.values(n as Nutrients).some((value) => value != null);
 }
 
-export function countNutrition(n: Nutrients): number {
-  return Object.values(n).filter((value) => value != null).length;
+export function countNutrition(n: unknown): number {
+  if (!n || typeof n !== "object") return 0;
+  return Object.values(n as Nutrients).filter((value) => value != null).length;
 }
 
 /** Converte os valores "por 100 g/ml" para uma porção em gramas. */
-export function scaleNutrients(per100: Nutrients, grams: number | null): Nutrients {
-  if (grams == null || !Number.isFinite(grams) || grams <= 0) return { ...EMPTY_NUTRIENTS };
-  const factor = grams / 100;
+export function scaleNutrients(per100: unknown, grams: unknown): Nutrients {
+  const source = (per100 && typeof per100 === "object" ? per100 : EMPTY_NUTRIENTS) as Nutrients;
+  const size = toNumber(grams);
+  if (size == null || size <= 0) return { ...EMPTY_NUTRIENTS };
+  const factor = size / 100;
   const scale = (value: number | null, digits = 1) =>
-    value == null ? null : round(value * factor, digits);
+    value == null || !Number.isFinite(value) ? null : round(value * factor, digits);
   return {
-    kcal: scale(per100.kcal, 0),
-    carbs: scale(per100.carbs),
-    protein: scale(per100.protein),
-    fat: scale(per100.fat),
-    sat_fat: scale(per100.sat_fat),
-    trans_fat: scale(per100.trans_fat),
-    fiber: scale(per100.fiber),
-    sugar: scale(per100.sugar),
-    sodium: scale(per100.sodium, 0),
+    kcal: scale(source.kcal, 0),
+    carbs: scale(source.carbs),
+    protein: scale(source.protein),
+    fat: scale(source.fat),
+    sat_fat: scale(source.sat_fat),
+    trans_fat: scale(source.trans_fat),
+    fiber: scale(source.fiber),
+    sugar: scale(source.sugar),
+    added_sugar: scale(source.added_sugar),
+    sodium: scale(source.sodium, 0),
   };
 }
 
@@ -571,7 +627,7 @@ export function buildPortion(
 ): Portion {
   const unit = basis === "100 ml" ? "ml" : "g";
   const size = grams != null && grams > 0 ? round(grams, 0) : 100;
-  const text = (label ?? "").trim();
+  const text = textOf(label, 60) ?? "";
   return {
     label: text || `${size} ${unit}`,
     grams: size,
@@ -585,29 +641,36 @@ const OFF_KCAL_PER_KJ = 4.184;
 
 /**
  * Normaliza `nutriments` do Open Food Facts (valores por 100 g/ml).
+ * Aceita entrada desconhecida: a API pública às vezes devolve lista, texto ou
+ * campos ausentes — nesse caso o resultado é "sem dados", nunca uma exceção.
  * Sódio vem em gramas na base; convertemos para mg. Sal (g) vira sódio/2,5.
  */
-export function nutrientsFromOpenFoodFacts(nutriments: Record<string, unknown>): Nutrients {
+export function nutrientsFromOpenFoodFacts(nutriments: unknown): Nutrients {
+  const source = (nutriments && typeof nutriments === "object" ? nutriments : {}) as Record<
+    string,
+    unknown
+  >;
   const kcal =
-    toNumber(nutriments["energy-kcal_100g"]) ??
-    (toNumber(nutriments["energy_100g"]) != null
-      ? toNumber(nutriments["energy_100g"])! / OFF_KCAL_PER_KJ
+    toNumber(source["energy-kcal_100g"]) ??
+    (toNumber(source["energy_100g"]) != null
+      ? toNumber(source["energy_100g"])! / OFF_KCAL_PER_KJ
       : null);
 
-  const sodiumGrams = toNumber(nutriments["sodium_100g"]);
-  const saltGrams = toNumber(nutriments["salt_100g"]);
+  const sodiumGrams = toNumber(source["sodium_100g"]);
+  const saltGrams = toNumber(source["salt_100g"]);
   const sodium =
     sodiumGrams != null ? sodiumGrams * 1000 : saltGrams != null ? (saltGrams * 1000) / 2.5 : null;
 
   return sanitizeNutrients({
     kcal: kcal ?? null,
-    carbs: toNumber(nutriments["carbohydrates_100g"]),
-    protein: toNumber(nutriments["proteins_100g"]),
-    fat: toNumber(nutriments["fat_100g"]),
-    sat_fat: toNumber(nutriments["saturated-fat_100g"]),
-    trans_fat: toNumber(nutriments["trans-fat_100g"]),
-    fiber: toNumber(nutriments["fiber_100g"]),
-    sugar: toNumber(nutriments["sugars_100g"]),
+    carbs: toNumber(source["carbohydrates_100g"]),
+    protein: toNumber(source["proteins_100g"]),
+    fat: toNumber(source["fat_100g"]),
+    sat_fat: toNumber(source["saturated-fat_100g"]),
+    trans_fat: toNumber(source["trans-fat_100g"]),
+    fiber: toNumber(source["fiber_100g"]),
+    sugar: toNumber(source["sugars_100g"]),
+    added_sugar: toNumber(source["added-sugars_100g"]),
     sodium,
   });
 }
@@ -644,8 +707,16 @@ const STOPWORDS = new Set([
   "tradicional",
 ]);
 
-export function normalizeText(text: string): string {
-  return (text ?? "")
+/**
+ * Normaliza texto para comparação (sem acento, minúsculo, só letras/números).
+ *
+ * Recebe `unknown` de propósito: este é o ponto que quebrava com
+ * `(text ?? "").normalize is not a function` quando a IA/OFF devolvia número,
+ * objeto ou lista. Aqui nada lança: valor não textual vira "" (ou o próprio
+ * número, quando faz sentido, ex.: código de barras).
+ */
+export function normalizeText(text: unknown): string {
+  return (textOf(text, 5000) ?? "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
@@ -653,14 +724,14 @@ export function normalizeText(text: string): string {
     .trim();
 }
 
-export function nameTokens(text: string): string[] {
+export function nameTokens(text: unknown): string[] {
   return normalizeText(text)
     .split(" ")
     .filter((token) => token.length > 1 && !STOPWORDS.has(token) && !/^\d+$/.test(token));
 }
 
 /** 0..1 — quanto o nome do produto encontrado na base combina com o da foto. */
-export function nameMatchScore(a: string, b: string): number {
+export function nameMatchScore(a: unknown, b: unknown): number {
   const left = new Set(nameTokens(a));
   const right = new Set(nameTokens(b));
   if (left.size === 0 || right.size === 0) return 0;
@@ -706,7 +777,8 @@ export function fmtPortion(portion: Portion, basis: "100 g" | "100 ml"): string 
 /* ------------------------------------------------- verificação de fonte web */
 
 /** Texto visível da página (sem scripts/estilos/tags), em minúsculas. */
-export function pageToText(html: string): string {
+export function pageToText(html: unknown): string {
+  if (typeof html !== "string" || !html) return "";
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -721,16 +793,17 @@ export function pageToText(html: string): string {
  * O número de kcal aparece perto de uma menção de energia/calorias?
  * Para 0 kcal exigimos "0 kcal" explícito — nunca aceitamos zero por omissão.
  */
-export function textConfirmsEnergy(text: string, kcal: number | null): boolean {
-  if (!text) return false;
+export function textConfirmsEnergy(text: unknown, kcal: unknown): boolean {
+  if (typeof text !== "string" || !text) return false;
   const markers = /(kcal|calorias|energia|kj|quilojoule)/;
 
-  if (kcal == null) return markers.test(text);
-  if (kcal === 0) return /\b0\s*(kcal|calorias)\b/.test(text);
+  const value = typeof kcal === "number" && Number.isFinite(kcal) ? kcal : null;
+  if (value == null) return markers.test(text);
+  if (value === 0) return /\b0\s*(kcal|calorias)\b/.test(text);
 
-  const variants = new Set<string>([String(Math.round(kcal))]);
-  variants.add(`${Math.round(kcal)},0`);
-  variants.add(`${Math.round(kcal)}.0`);
+  const variants = new Set<string>([String(Math.round(value))]);
+  variants.add(`${Math.round(value)},0`);
+  variants.add(`${Math.round(value)}.0`);
 
   for (const variant of variants) {
     let from = 0;
@@ -746,12 +819,14 @@ export function textConfirmsEnergy(text: string, kcal: number | null): boolean {
 }
 
 /** A página cita pelo menos um token relevante do nome do produto? */
-export function sourceMentionsProduct(text: string, productName: string): boolean {
+export function sourceMentionsProduct(text: unknown, productName: unknown): boolean {
+  const haystack = typeof text === "string" ? text.toLowerCase() : "";
+  if (!haystack) return false;
   const tokens = nameTokens(productName)
     .filter((token) => token.length > 2)
     .slice(0, 4);
   if (tokens.length === 0) return true;
-  return tokens.some((token) => text.includes(token));
+  return tokens.some((token) => haystack.includes(token));
 }
 
 /* ----------------------------------------------------------------- histórico */

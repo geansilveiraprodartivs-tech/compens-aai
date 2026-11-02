@@ -596,9 +596,20 @@ function AnalysisCard({
               <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Macro label="Carboidratos" value={fmtGrams(analysis.portion.nutrients.carbs)} />
                 <Macro label="Proteínas" value={fmtGrams(analysis.portion.nutrients.protein)} />
-                <Macro label="Gorduras" value={fmtGrams(analysis.portion.nutrients.fat)} />
+                <Macro label="Gorduras totais" value={fmtGrams(analysis.portion.nutrients.fat)} />
                 <Macro label="Fibras" value={fmtGrams(analysis.portion.nutrients.fiber)} />
+                <Macro label="Açúcares totais" value={fmtGrams(analysis.portion.nutrients.sugar)} />
+                <Macro
+                  label="Açúcares adicionados"
+                  value={fmtGrams(analysis.portion.nutrients.added_sugar)}
+                />
+                <Macro label="Saturadas" value={fmtGrams(analysis.portion.nutrients.sat_fat)} />
+                <Macro label="Sódio" value={fmtSodium(analysis.portion.nutrients.sodium)} />
               </div>
+              <p className="mt-2 text-[10px] leading-tight text-muted-foreground">
+                Estes valores são da porção de referência, não da embalagem inteira. Para o pacote
+                completo, some as porções que você consumir.
+              </p>
             </div>
           )}
 
@@ -645,9 +656,21 @@ function AnalysisCard({
                   <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-3">
                     <NutrientLine label="Carboidratos" value={fmtGrams(consumed.nutrients.carbs)} />
                     <NutrientLine label="Proteínas" value={fmtGrams(consumed.nutrients.protein)} />
-                    <NutrientLine label="Gorduras" value={fmtGrams(consumed.nutrients.fat)} />
+                    <NutrientLine
+                      label="Gorduras totais"
+                      value={fmtGrams(consumed.nutrients.fat)}
+                    />
                     <NutrientLine label="Saturadas" value={fmtGrams(consumed.nutrients.sat_fat)} />
-                    <NutrientLine label="Açúcares" value={fmtGrams(consumed.nutrients.sugar)} />
+                    <NutrientLine label="Trans" value={fmtGrams(consumed.nutrients.trans_fat)} />
+                    <NutrientLine label="Fibras" value={fmtGrams(consumed.nutrients.fiber)} />
+                    <NutrientLine
+                      label="Açúcares totais"
+                      value={fmtGrams(consumed.nutrients.sugar)}
+                    />
+                    <NutrientLine
+                      label="Açúcares adicionados"
+                      value={fmtGrams(consumed.nutrients.added_sugar)}
+                    />
                     <NutrientLine label="Sódio" value={fmtSodium(consumed.nutrients.sodium)} />
                   </div>
                 </div>
@@ -674,7 +697,11 @@ function AnalysisCard({
                 <NutrientLine label="Saturadas" value={fmtGrams(analysis.per100.sat_fat)} />
                 <NutrientLine label="Trans" value={fmtGrams(analysis.per100.trans_fat)} />
                 <NutrientLine label="Fibras" value={fmtGrams(analysis.per100.fiber)} />
-                <NutrientLine label="Açúcares" value={fmtGrams(analysis.per100.sugar)} />
+                <NutrientLine label="Açúcares totais" value={fmtGrams(analysis.per100.sugar)} />
+                <NutrientLine
+                  label="Açúcares adicionados"
+                  value={fmtGrams(analysis.per100.added_sugar)}
+                />
                 <NutrientLine label="Sódio" value={fmtSodium(analysis.per100.sodium)} />
               </div>
               <p className="mt-2 text-[10px] leading-tight text-muted-foreground">
@@ -691,6 +718,12 @@ function AnalysisCard({
             <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
               Objetivo: {goalLabel(analysis.goal)}
             </p>
+            {analysis.goal === "know" && (
+              <p className="mt-1.5 text-[11px] leading-snug opacity-85">
+                Você ainda não escolheu um objetivo. Esta é uma leitura geral do produto — escolha
+                um objetivo acima e analise de novo para ver o encaixe na sua rotina.
+              </p>
+            )}
           </div>
 
           {/* Benefícios / atenção */}
@@ -726,6 +759,21 @@ function AnalysisCard({
                   </ul>
                 </div>
               )}
+            </div>
+          )}
+
+          {analysis.allergens && (
+            <div className="rounded-xl border border-destructive/35 bg-destructive/5 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-bold text-destructive">
+                <ShieldAlert className="size-3.5" /> Alergênicos informados
+              </p>
+              <p className="mt-1.5 text-[11px] leading-snug text-foreground">
+                {analysis.allergens}
+              </p>
+              <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
+                Transcrição da declaração do rótulo/fonte. Confira sempre a embalagem antes de
+                consumir — a formulação pode mudar.
+              </p>
             </div>
           )}
 
