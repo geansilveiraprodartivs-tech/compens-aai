@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -9,6 +10,14 @@ import {
   isNativePlatform,
   openNativeGoogleSignIn,
 } from "@/lib/nativeAuth";
+import { checkSignupEligibility, getEntitlement } from "@/lib/subscription.functions";
+import {
+  SIGNUP_ALREADY_EXISTS_MESSAGE,
+  TRIAL_OFFER_HOURS,
+  authModeFromSearch,
+  type AuthMode,
+  type AuthSearch,
+} from "@/lib/trialOffer";
 import { Eye, EyeOff } from "lucide-react";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
@@ -16,6 +25,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/auth")({
+  validateSearch: (search: Record<string, unknown>): AuthSearch => {
+    const mode = authModeFromSearch(search);
+    return mode === "signup" ? { modo: "cadastro" } : {};
+  },
   head: () => ({
     meta: [
       { title: "Entrar — CompensAI" },
@@ -33,7 +46,7 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Mode = "signin" | "signup" | "reset";
+type Mode = AuthMode;
 
 function friendlyAuthError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err ?? "");
@@ -45,12 +58,20 @@ function friendlyAuthError(err: unknown): string {
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>("signin");
+  const { modo } = Route.useSearch();
+  const [mode, setMode] = useState<Mode>(authModeFromSearch({ modo }));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isNative, setIsNative] = useState(false);
+  const checkSignup = useServerFn(checkSignupEligibility);
+  const startTrial = useServerFn(getEntitlement);
+
+  // O link de cadastro (`/auth?modo=cadastro`) abre direto no cadastro.
+  useEffect(() => {
+    setMode(authModeFromSearch({ modo }));
+  }, [modo]);
 
   useEffect(() => {
     setIsNative(isNativePlatform());
@@ -112,6 +133,22 @@ function AuthPage() {
         return;
       }
       if (mode === "signup") {
+        const targetEmail = email.trim();
+
+        // Uma caixa de e-mail (mesmo com apelido +tag ou pontos do Gmail) tem
+        // direito a um único teste: se já existe conta, manda entrar.
+        try {
+          const check = await checkSignup({ data: { email: targetEmail } });
+          if (check.existing_account) {
+            toast.error(SIGNUP_ALREADY_EXISTS_MESSAGE);
+            setMode("signin");
+            return;
+          }
+        } catch (guardError) {
+          // Verificação indisponível não pode impedir o cadastro.
+          console.warn("[CompensAI] verificação de cadastro indisponível:", guardError);
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -119,6 +156,13 @@ function AuthPage() {
         });
         if (error) throw error;
         if (data.session) {
+          // As 48 horas começam a contar agora, no relógio do servidor.
+          try {
+            await startTrial();
+          } catch (trialError) {
+            // Se falhar, o trial inicia na primeira abertura do app.
+            console.warn("[CompensAI] não foi possível marcar o início do teste:", trialError);
+          }
           navigate({ to: "/app", replace: true });
           return;
         }
@@ -155,7 +199,9 @@ function AuthPage() {
       <div className="glass glow mt-8 w-full max-w-sm p-6">
         <h1 className="text-xl font-bold">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Onde compensa comprar? Descubra em segundos.
+          {mode === "signup"
+            ? `Teste grátis de ${TRIAL_OFFER_HOURS} horas com todas as funcionalidades.`
+            : "Onde compensa comprar? Descubra em segundos."}
         </p>
 
         <form onSubmit={submit} className="mt-5 space-y-3">

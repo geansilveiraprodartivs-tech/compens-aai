@@ -30,6 +30,7 @@ import {
   type StoredSubscription,
   type SubscriptionStatus,
 } from "./entitlement";
+import { isSameSignupMailbox, normalizeSignupEmail } from "./trialOffer";
 
 export const BILLING_META_KEY = "compensai";
 
@@ -248,6 +249,34 @@ export async function findUserByEmail(email: string): Promise<string | null> {
     if (users.length < 200) return null;
   }
   return null;
+}
+
+/**
+ * Já existe conta para esta caixa de e-mail?
+ *
+ * O teste grátis é por CONTA e o `trial_started_at` fica em `app_metadata`
+ * (gravado só pela service role): sair e entrar de novo nunca reinicia nada.
+ * O furo que sobra é criar outra conta com a mesma caixa usando apelido
+ * (`fulano+2@gmail.com`, `fu.lano@gmail.com`). Esta verificação fecha esse
+ * caminho: compara o e-mail normalizado (sem `+tag` e, no Gmail, sem pontos).
+ *
+ * É uma trava de CADASTRO (deterrente), não uma decisão de acesso: quem chamar
+ * a API do Supabase direto ainda cria a conta, mas o trial da nova conta é um
+ * trial novo — o limite duro exigiria DDL (ver relatório).
+ */
+export async function hasAccountForEmailFamily(email: string): Promise<boolean> {
+  const target = normalizeSignupEmail(email);
+  if (!target) return false;
+
+  const db = await admin();
+  for (let page = 1; page <= 50; page += 1) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw new Error(`Falha ao verificar cadastro: ${error.message}`);
+    const users = (data?.users ?? []) as AdminUser[];
+    if (users.some((u) => isSameSignupMailbox(u.email, target))) return true;
+    if (users.length < 200) return false;
+  }
+  return false;
 }
 
 /**

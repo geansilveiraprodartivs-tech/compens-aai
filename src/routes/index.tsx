@@ -6,6 +6,7 @@ import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/button";
 import shareImage from "@/assets/compensai-green-share.jpg.asset.json";
 import { PixSection } from "@/components/PixSection";
+import { TrialOffer } from "@/components/TrialOffer";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -47,9 +48,19 @@ function Landing() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/app", replace: true });
-    });
+    // Volta do cadastro/entrada com Google: a sessão pode chegar no hash
+    // (detectSessionInUrl) ou como `?code=`, que precisa ser trocado aqui.
+    const code =
+      typeof window === "undefined"
+        ? null
+        : new URLSearchParams(window.location.search).get("code");
+    const ready = code ? supabase.auth.exchangeCodeForSession(code) : Promise.resolve();
+    ready
+      .catch(() => undefined)
+      .then(() => supabase.auth.getSession())
+      .then(({ data }) => {
+        if (data.session) navigate({ to: "/app", replace: true });
+      });
   }, [navigate]);
 
   return (
@@ -89,7 +100,10 @@ function Landing() {
         </section>
         </div>
       </main>
-      <div className="px-5"><PixSection /></div>
+      <div className="px-5">
+        <TrialOffer />
+        <PixSection />
+      </div>
     </div>
   );
 }

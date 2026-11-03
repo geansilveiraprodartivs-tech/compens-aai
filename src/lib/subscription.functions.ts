@@ -16,6 +16,22 @@ export const getEntitlement = createServerFn({ method: "POST" })
     return getEntitlementForUser(context.userId);
   });
 
+/**
+ * Verificação de cadastro (sem autenticação — roda antes de a conta existir).
+ *
+ * Só responde SIM/NÃO para "esta caixa de e-mail já tem conta?". É deterrente
+ * contra criar uma segunda conta (e um segundo teste grátis) com apelido do
+ * mesmo e-mail; não altera plano, trial nem qualquer dado.
+ */
+export const checkSignupEligibility = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) =>
+    z.object({ email: z.string().trim().min(3).max(254) }).parse(input),
+  )
+  .handler(async ({ data }): Promise<{ existing_account: boolean }> => {
+    const { hasAccountForEmailFamily } = await import("@/lib/entitlement.server");
+    return { existing_account: await hasAccountForEmailFamily(data.email) };
+  });
+
 export const createCheckoutLink = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
