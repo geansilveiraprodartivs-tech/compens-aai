@@ -2,8 +2,12 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  buildRecommendationContext,
+  cleanSuggestions,
   cleanText,
+  compareSuggestion,
   composeAnalysis,
+  filterSuggestions,
   hasNutrition,
   nameMatchScore,
   normalizeText,
@@ -17,9 +21,11 @@ import {
   unknownAnalysis,
   type AiFoodPayload,
   type FoodAnalysis,
+  type FoodSuggestion,
   type NutritionGoal,
   type OffMatch,
   type Nutrients,
+  type RecommendationContext,
   type WebMatch,
 } from "@/lib/nutrition";
 
@@ -127,8 +133,13 @@ const IDENTIFY_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "why"],
-        properties: { name: { type: "string" }, why: { type: "string" } },
+        required: ["name", "brand", "why", "compare"],
+        properties: {
+          name: { type: "string" },
+          brand: { type: ["string", "null"] },
+          why: { type: "string" },
+          compare: { type: ["string", "null"] },
+        },
       },
     },
     balance_tips: { type: "array", items: { type: "string" } },
@@ -190,13 +201,22 @@ TAREFA 2 — TRANSCREVER O RÓTULO (se estiver legível):
 TAREFA 3 — PORÇÃO DE REFERÊNCIA:
 - "serving_size_text" e "serving_grams": porção usual (ex.: "1 fatia"/30, "1 copo"/200, "1 unidade média"/130). Para bebidas use ml. Sem noção de porção: 100.
 
-TAREFA 4 — DICAS (sem números e sem promessas):
-- "better_choices": 2 a 3 alternativas de supermercado com nome genérico (ex.: "Iogurte natural integral", "Aveia em flocos") e o motivo em uma frase curta. Sem marcas inventadas.
+TAREFA 4 — DICAS PERSONALIZADAS (sem números e sem promessas):
+- Use o CONTEXTO DO USUÁRIO para escolher as alternativas. Elas precisam fazer sentido para o objetivo dele e respeitar as restrições que ele informou.
+- "better_choices": 2 a 3 alternativas de supermercado. Para cada uma preencha:
+  - "name": nome genérico do alimento/produto (ex.: "Iogurte natural integral", "Aveia em flocos");
+  - "brand": a marca APENAS quando ela estiver visível na foto ou você tiver certeza absoluta; caso contrário null;
+  - "why": uma frase curta explicando por que essa alternativa ajuda no objetivo dele;
+  - "compare": comparação qualitativa com o produto analisado (ex.: "mais fibras e menos açúcar"), sem nenhum número.
+- Não sugira itens que já estão na lista de compras informada no contexto.
+- Se o contexto disser que o usuário não definiu objetivo, dê sugestões gerais e neutras (sem dizer que são personalizadas).
 - "balance_tips": 2 a 4 ideias práticas de como consumir o alimento com equilíbrio (porção, combinação, momento do dia). Sem culpa, sem proibição, sem valores numéricos.
 
 PROIBIDO:
 - Dar qualquer número de calorias ou nutrientes fora dos campos de "label" transcritos da foto.
 - Usar conhecimento de tabelas nutricionais de memória, estimar ou "chutar" valores.
+- Inventar marcas, preços, embalagens ou alegações de saúde.
+- Presumir doenças, alergias, dietas ou restrições que o usuário não informou.
 - Fazer diagnóstico, prometer emagrecimento ou garantir segurança para alergias.
 
 Responda apenas o JSON.`;
@@ -224,6 +244,49 @@ Regras obrigatórias:
 - Se não encontrar fonte confiável com os valores deste item específico: "found" = false, todos os nutrientes = null e o resto = null.
 - Nunca informe 0 kcal sem que a fonte diga 0 kcal.
 - Para alimentos naturais sem marca, use a tabela oficial do alimento (ex.: "banana prata" na TBCA/TACO/USDA) e diga qual tabela usou.
+
+Responda apenas o JSON.`;
+
+/* --------------------------------- sugestões personalizadas (texto, sem foto) */
+
+/** Só o que a IA pode dizer sobre uma alternativa — nunca números. */
+const SUGGESTION_ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "brand", "why", "compare"],
+  properties: {
+    name: { type: "string" },
+    brand: { type: ["string", "null"] },
+    why: { type: "string" },
+    compare: { type: ["string", "null"] },
+  },
+} as const;
+
+const SUGGEST_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["choices"],
+  properties: { choices: { type: "array", items: SUGGESTION_ITEM_SCHEMA } },
+} as const;
+
+const SUGGEST_PROMPT = `Você sugere alternativas de compra no app CompensAI.
+
+Recebe um alimento/produto já analisado (nome, marca, versão e os valores por 100 g/ml que o app conseguiu confirmar) e o CONTEXTO DO USUÁRIO.
+
+Sua tarefa: devolver 2 ou 3 alternativas comuns de supermercado que possam ser melhores para o objetivo dele.
+
+Para cada alternativa:
+- "name": nome genérico do alimento/produto (ex.: "Aveia em flocos", "Iogurte natural integral"). Nada de nome de fantasia.
+- "brand": a marca apenas quando você tiver certeza absoluta de que ela existe e produz esse item; caso contrário null. Nunca invente marca.
+- "why": uma frase curta explicando por que essa alternativa ajuda no objetivo dele.
+- "compare": comparação qualitativa com o produto analisado (ex.: "mais fibras e menos açúcar"), sem nenhum número.
+
+Regras obrigatórias:
+- Nunca escreva números de calorias ou nutrientes: o app busca os valores em fontes reais.
+- Respeite as restrições e alergias informadas. Não presuma nenhuma que não esteja no contexto.
+- Não repita itens que já estão na lista de compras.
+- Se o usuário não definiu objetivo, dê sugestões gerais de variedade, sem julgar alimentos como bons ou ruins.
+- Nada de promessa de saúde, emagrecimento ou cura.
 
 Responda apenas o JSON.`;
 
@@ -367,12 +430,20 @@ function parseJson(text: string): unknown {
 type IdentifyOptions = {
   image?: string;
   hint?: string;
+  /** Objetivo + preferências + restrições + itens já na lista. */
+  context?: RecommendationContext;
 };
 
-async function identifyFood({ image, hint }: IdentifyOptions): Promise<AiFoodPayload> {
+async function identifyFood({ image, hint, context }: IdentifyOptions): Promise<AiFoodPayload> {
   const key = gatewayKey(true);
 
-  const content: Record<string, unknown>[] = [{ type: "input_text", text: IDENTIFY_PROMPT }];
+  const contextText = context ? buildRecommendationContext(context) : null;
+  const content: Record<string, unknown>[] = [
+    {
+      type: "input_text",
+      text: contextText ? `${IDENTIFY_PROMPT}\n\n${contextText}` : IDENTIFY_PROMPT,
+    },
+  ];
   if (hint) {
     content.push({
       type: "input_text",
@@ -515,13 +586,16 @@ function pickOffCandidate(
   return best ? toOffMatch(best.product, best.nutrients) : null;
 }
 
-async function lookupOpenFoodFacts(wanted: {
-  name: unknown;
-  brand: unknown;
-  barcode: unknown;
-}): Promise<OffMatch | null> {
+async function lookupOpenFoodFacts(
+  wanted: {
+    name: unknown;
+    brand: unknown;
+    barcode: unknown;
+  },
+  budgetMs = OFF_BUDGET_MS,
+): Promise<OffMatch | null> {
   const digits = (textOf(wanted.barcode, 32) ?? "").replace(/\D/g, "");
-  const deadline = Date.now() + OFF_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const remaining = () => deadline - Date.now();
 
   if (digits.length >= 8 && digits.length <= 14) {
@@ -689,9 +763,191 @@ async function researchWeb(target: ResearchTarget): Promise<WebMatch | null> {
   };
 }
 
+/* ------------------------------------- alternativas personalizadas + fontes */
+
+const SUGGEST_TIMEOUT_MS = 25_000;
+/** Orçamento curto por alternativa: a análise não pode ficar lenta. */
+const SUGGESTION_LOOKUP_BUDGET_MS = 4_000;
+
+/** Resumo do produto analisado para a IA sugerir alternativas coerentes. */
+function describeAnalysis(analysis: FoodAnalysis): string {
+  const lines = [`Produto analisado: ${analysis.name}`];
+  if (analysis.brand) lines.push(`Marca: ${analysis.brand}`);
+  if (analysis.variant) lines.push(`Versão/sabor: ${analysis.variant}`);
+  if (analysis.category) lines.push(`Categoria: ${analysis.category}`);
+
+  if (analysis.origin !== "unknown") {
+    const unit = analysis.basis === "100 ml" ? "100 ml" : "100 g";
+    const values = analysis.per100;
+    const parts = [
+      values.kcal != null ? `${values.kcal} kcal` : null,
+      values.fiber != null ? `${values.fiber} g de fibras` : null,
+      values.sugar != null ? `${values.sugar} g de açúcares` : null,
+      values.added_sugar != null ? `${values.added_sugar} g de açúcares adicionados` : null,
+      values.protein != null ? `${values.protein} g de proteína` : null,
+      values.sat_fat != null ? `${values.sat_fat} g de gordura saturada` : null,
+      values.sodium != null ? `${values.sodium} mg de sódio` : null,
+    ].filter(Boolean);
+    if (parts.length > 0) lines.push(`Valores confirmados por ${unit}: ${parts.join(", ")}.`);
+  } else {
+    lines.push("Não há valores nutricionais confirmados para este produto.");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Sugestões para os caminhos em que a IA não devolveu alternativas (ex.:
+ * pesquisa por nome). Se o gateway falhar, a análise continua sem sugestões.
+ */
+async function suggestChoices(params: {
+  analysis: FoodAnalysis;
+  context: RecommendationContext;
+}): Promise<FoodSuggestion[]> {
+  const key = gatewayKey(false);
+  if (!key) return [];
+
+  try {
+    const result = await runGateway({
+      key,
+      timeoutMs: SUGGEST_TIMEOUT_MS,
+      body: {
+        reasoning: { effort: "low" },
+        text: {
+          format: {
+            type: "json_schema",
+            name: "better_choices",
+            strict: true,
+            schema: SUGGEST_SCHEMA,
+          },
+        },
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: [
+                  SUGGEST_PROMPT,
+                  describeAnalysis(params.analysis),
+                  buildRecommendationContext(params.context),
+                ].join("\n\n"),
+              },
+            ],
+          },
+        ],
+      },
+    });
+    if (!result.ok) return [];
+
+    const parsed = parseJson(result.text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return cleanSuggestions((parsed as { choices?: unknown }).choices);
+  } catch (error) {
+    console.error("[CompensAI] sugestões indisponíveis:", error);
+    return [];
+  }
+}
+
+/**
+ * Busca os valores reais de cada alternativa (Open Food Facts) e monta a
+ * comparação numérica com o produto analisado. Alternativa sem fonte fica
+ * apenas com nome/motivo — nunca com número inventado.
+ */
+async function enrichSuggestions(
+  suggestions: FoodSuggestion[],
+  reference: { per100: Nutrients; origin: FoodAnalysis["origin"]; goal: NutritionGoal },
+): Promise<FoodSuggestion[]> {
+  return Promise.all(
+    suggestions.map(async (suggestion) => {
+      const off = await lookupOpenFoodFacts(
+        {
+          name: suggestion.name,
+          brand: suggestion.brand ?? null,
+          barcode: suggestion.barcode ?? null,
+        },
+        SUGGESTION_LOOKUP_BUDGET_MS,
+      );
+      if (!off || !hasNutrition(off.nutrients)) return suggestion;
+
+      const offName = textOf(off.name, 120);
+      const offBrands = textOf(off.brands, 60);
+      const code = textOf(off.code, 32);
+
+      const enriched: FoodSuggestion = {
+        ...suggestion,
+        brand: suggestion.brand ?? offBrands,
+        barcode: suggestion.barcode ?? code,
+        per100: off.nutrients,
+        basis: "100 g",
+        source_name: (offName
+          ? offBrands
+            ? `${offName} · ${offBrands}`
+            : offName
+          : "Open Food Facts"
+        ).slice(0, 80),
+        source_url: code
+          ? `https://world.openfoodfacts.org/product/${encodeURIComponent(code)}`
+          : "https://world.openfoodfacts.org",
+      };
+
+      if (reference.origin !== "unknown") {
+        const comparison = compareSuggestion(reference.per100, off.nutrients, reference.goal);
+        if (comparison) enriched.compare = comparison;
+      }
+      return enriched;
+    }),
+  );
+}
+
+/**
+ * Fecha a análise com alternativas coerentes com o usuário: remove o que ele
+ * já tem na lista, gera sugestões quando faltam e confirma os valores em fonte.
+ */
+async function withPersonalizedChoices(
+  analysis: FoodAnalysis,
+  context: RecommendationContext,
+): Promise<FoodAnalysis> {
+  if (!analysis.ok) return analysis;
+
+  let choices = filterSuggestions(analysis.better_choices, context.listItems);
+  if (choices.length === 0) {
+    choices = filterSuggestions(await suggestChoices({ analysis, context }), context.listItems);
+  }
+  if (choices.length === 0) return { ...analysis, better_choices: [] };
+
+  const enriched = await enrichSuggestions(choices, {
+    per100: analysis.per100,
+    origin: analysis.origin,
+    goal: analysis.goal ?? context.goal,
+  });
+  return { ...analysis, better_choices: enriched };
+}
+
 /* --------------------------------------------------------------- handlers */
 
 const GOAL = z.enum(["lose", "maintain", "gain", "know"]).default("know");
+
+const USER_CONTEXT_SCHEMA = {
+  preferences: z.string().trim().max(160).optional(),
+  restrictions: z.string().trim().max(160).optional(),
+  listItems: z.array(z.string().trim().max(80)).max(20).optional(),
+};
+
+type UserContextInput = {
+  goal: NutritionGoal;
+  preferences?: string | undefined;
+  restrictions?: string | undefined;
+  listItems?: string[] | undefined;
+};
+
+function toRecommendationContext(data: UserContextInput): RecommendationContext {
+  return {
+    goal: data.goal,
+    preferences: cleanText(data.preferences, 160),
+    restrictions: cleanText(data.restrictions, 160),
+    listItems: data.listItems ?? [],
+  };
+}
 
 export const analyzeFoodPhoto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -700,6 +956,7 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
       .object({
         image: z.string().startsWith("data:image/").max(8_000_000),
         goal: GOAL,
+        ...USER_CONTEXT_SCHEMA,
       })
       .parse(d),
   )
@@ -708,7 +965,8 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
     await assertPremium(context.userId);
 
     const goal = data.goal as NutritionGoal;
-    const payload = await identifyFood({ image: data.image });
+    const recommendation = toRecommendationContext({ ...data, goal });
+    const payload = await identifyFood({ image: data.image, context: recommendation });
 
     const name = cleanText(payload.name, 90) ?? "";
     const brand = cleanText(payload.brand, 60);
@@ -737,7 +995,8 @@ export const analyzeFoodPhoto = createServerFn({ method: "POST" })
       }
     }
 
-    return composeAnalysis(payload, { off, web }, goal);
+    const analysis = composeAnalysis(payload, { off, web }, goal);
+    return withPersonalizedChoices(analysis, recommendation);
   });
 
 /**
@@ -752,6 +1011,7 @@ export const researchFoodByName = createServerFn({ method: "POST" })
         name: z.string().trim().min(2).max(120),
         brand: z.string().trim().max(60).optional(),
         goal: GOAL,
+        ...USER_CONTEXT_SCHEMA,
       })
       .parse(d),
   )
@@ -760,15 +1020,19 @@ export const researchFoodByName = createServerFn({ method: "POST" })
     await assertPremium(context.userId);
 
     const goal = data.goal as NutritionGoal;
+    const recommendation = toRecommendationContext({ ...data, goal });
     const name = data.name.trim();
     const brand = data.brand?.trim() || null;
 
     const off = await lookupOpenFoodFacts({ name, brand, barcode: null });
     if (off) {
-      return composeAnalysis(
-        { ok: true, name, brand, confidence: "medium", packaged: true },
-        { off },
-        goal,
+      return withPersonalizedChoices(
+        composeAnalysis(
+          { ok: true, name, brand, confidence: "medium", packaged: true },
+          { off },
+          goal,
+        ),
+        recommendation,
       );
     }
 
@@ -780,10 +1044,13 @@ export const researchFoodByName = createServerFn({ method: "POST" })
       packaged: true,
     });
     if (web) {
-      return composeAnalysis(
-        { ok: true, name, brand, confidence: "medium", packaged: true },
-        { web },
-        goal,
+      return withPersonalizedChoices(
+        composeAnalysis(
+          { ok: true, name, brand, confidence: "medium", packaged: true },
+          { web },
+          goal,
+        ),
+        recommendation,
       );
     }
 

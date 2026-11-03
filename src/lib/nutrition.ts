@@ -109,7 +109,31 @@ export const VERDICTS: Record<FitVerdict, { label: string; className: string }> 
   },
 };
 
-export type FoodSuggestion = { name: string; why: string };
+/**
+ * Alternativa sugerida para a próxima compra.
+ *
+ * `name` e `why` vêm da IA (texto, sem números). Os campos opcionais só
+ * aparecem quando o servidor confirmou os dados em uma fonte de verdade:
+ * a marca é a da ficha encontrada, `per100` vem da base/fonte verificada e
+ * `compare` é calculado comparando os números reais das duas fichas.
+ * Sem fonte confiável, esses campos ficam ausentes — nunca preenchidos "no
+ * chute" pela IA.
+ */
+export type FoodSuggestion = {
+  name: string;
+  why: string;
+  /** Marca confirmada na fonte (nunca inventada). */
+  brand?: string | null;
+  /** Código de barras confirmado na fonte, quando existir. */
+  barcode?: string | null;
+  /** Frase qualitativa da IA (sem números) ou comparação numérica calculada. */
+  compare?: string | null;
+  /** Valores por 100 g/ml da alternativa, quando a fonte foi encontrada. */
+  per100?: Nutrients | null;
+  basis?: "100 g" | "100 ml";
+  source_name?: string | null;
+  source_url?: string | null;
+};
 
 export type Portion = { label: string; grams: number | null; nutrients: Nutrients };
 
@@ -250,17 +274,218 @@ export function cleanList(value: unknown, max = 4, maxLen = 220): string[] {
     .slice(0, max);
 }
 
+const SUGGESTION_BASIS: ("100 g" | "100 ml")[] = ["100 g", "100 ml"];
+
+/**
+ * Normaliza as alternativas vindas da IA. Só nome e motivo são obrigatórios;
+ * os campos de fonte/valores entram apenas quando existem e passam pelo
+ * saneamento — a IA não consegue "plantar" nutrientes aqui.
+ */
 export function cleanSuggestions(value: unknown): FoodSuggestion[] {
   if (!Array.isArray(value)) return [];
   const out: FoodSuggestion[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
-    const name = cleanText((item as FoodSuggestion).name, 80);
-    const why = cleanText((item as FoodSuggestion).why, 160);
-    if (name && why) out.push({ name, why });
+    const raw = item as FoodSuggestion;
+    const name = cleanText(raw.name, 80);
+    const why = cleanText(raw.why, 160);
+    if (!name || !why) continue;
+    const suggestion: FoodSuggestion = { name, why };
+    const brand = cleanText(raw.brand, 60);
+    if (brand) suggestion.brand = brand;
+    const barcode = textOf(raw.barcode, 32);
+    if (barcode) suggestion.barcode = barcode;
+    const compare = cleanText(raw.compare, 180);
+    if (compare) suggestion.compare = compare;
+    if (raw.per100 && typeof raw.per100 === "object") {
+      const per100 = sanitizeNutrients(raw.per100);
+      if (hasNutrition(per100)) {
+        suggestion.per100 = per100;
+        suggestion.basis = SUGGESTION_BASIS.includes(raw.basis as "100 g" | "100 ml")
+          ? (raw.basis as "100 g" | "100 ml")
+          : "100 g";
+      }
+    }
+    const sourceName = cleanText(raw.source_name, 80);
+    if (sourceName) suggestion.source_name = sourceName;
+    const sourceUrl = cleanText(raw.source_url, 500);
+    if (sourceUrl && /^https?:\/\//i.test(sourceUrl)) suggestion.source_url = sourceUrl;
+    out.push(suggestion);
     if (out.length >= 3) break;
   }
   return out;
+}
+
+/* ------------------------------------------ recomendações personalizadas */
+
+/** Foco de cada objetivo, usado no contexto enviado à IA e nos testes. */
+export const SUGGESTION_FOCUS: Record<NutritionGoal, string> = {
+  lose: "mais fibras, mais saciedade e menos açúcar",
+  gain: "mais proteína por porção e energia de qualidade",
+  maintain: "equilíbrio entre nutrientes, sem extremos",
+  know: "variedade e informação, sem julgamento",
+};
+
+/** Contexto que o usuário informa na tela (nada é presumido). */
+export type RecommendationContext = {
+  goal: NutritionGoal;
+  preferences?: string | null;
+  restrictions?: string | null;
+  listItems?: unknown;
+};
+
+/** Nome de um item de lista em qualquer formato aceitável. */
+function listNameOf(value: unknown): string | null {
+  if (typeof value === "string") return cleanText(value, 80);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return textOf((value as { name?: unknown }).name, 80);
+  }
+  return null;
+}
+
+/** Nomes da lista de compras (aceita lista, texto separado por vírgula etc.). */
+export function cleanListNames(value: unknown, max = 12): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[;,\n]/) : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const name = listNameOf(item);
+    if (!name) continue;
+    const key = normalizeText(name);
+    if (!key || out.some((prev) => normalizeText(prev) === key)) continue;
+    out.push(name);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Texto de contexto anexado ao prompt. Função pura: o que a IA recebe é
+ * exatamente o que está aqui — objetivo, preferências/restrições escritas pelo
+ * usuário e o que já está na lista.
+ */
+export function buildRecommendationContext(context: RecommendationContext): string {
+  const goal = context.goal ?? "know";
+  const preferences = cleanText(context.preferences, 160);
+  const restrictions = cleanText(context.restrictions, 160);
+  const items = cleanListNames(context.listItems);
+
+  const lines = [
+    "CONTEXTO DO USUÁRIO (use para personalizar as alternativas):",
+    `- Objetivo alimentar: ${goalLabel(goal)} (foco: ${SUGGESTION_FOCUS[goal]}).`,
+  ];
+
+  if (goal === "know") {
+    lines.push(
+      "- O usuário NÃO definiu objetivo alimentar: dê sugestões gerais de variedade e não afirme que são personalizadas.",
+    );
+  }
+  lines.push(
+    preferences
+      ? `- Preferências alimentares informadas por ele: ${preferences}.`
+      : "- Preferências alimentares: não informadas — não presuma nenhuma.",
+  );
+  lines.push(
+    restrictions
+      ? `- Restrições/alergias informadas por ele: ${restrictions}. Evite sugerir itens que as contrariem.`
+      : "- Restrições/alergias: não informadas — não presuma nenhuma condição médica.",
+  );
+  lines.push(
+    items.length > 0
+      ? `- Já estão na lista de compras dele: ${items.join(", ")}. Evite repetir esses itens.`
+      : "- Lista de compras: vazia ou indisponível.",
+  );
+  lines.push(
+    "- As alternativas precisam ser alimentos/produtos comuns de supermercado, coerentes com esse contexto.",
+    "- Nunca cite marcas que você não consegue confirmar e nunca escreva números nutricionais nesta etapa.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Remove alternativas que o usuário já tem na lista (ou repetidas entre si).
+ * Evita recomendação redundante sem esconder demais: no máximo 3 ficam.
+ */
+export function filterSuggestions(
+  suggestions: FoodSuggestion[],
+  listItems: unknown,
+  limit = 3,
+): FoodSuggestion[] {
+  const names = cleanListNames(listItems);
+  const kept: FoodSuggestion[] = [];
+  for (const suggestion of suggestions) {
+    if (names.some((name) => isSameProductName(suggestion.name, name))) continue;
+    if (kept.some((item) => isSameProductName(item.name, suggestion.name))) continue;
+    kept.push(suggestion);
+    if (kept.length >= limit) break;
+  }
+  return kept;
+}
+
+/** Nomes que descrevem o mesmo item de compra (para não duplicar). */
+export function isSameProductName(a: unknown, b: unknown): boolean {
+  const left = normalizeText(a);
+  const right = normalizeText(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.length >= 4 && right.includes(left)) return true;
+  if (right.length >= 4 && left.includes(right)) return true;
+  return nameMatchScore(left, right) >= 0.6;
+}
+
+const COMPARE_ORDER: Record<NutritionGoal, (keyof Nutrients)[]> = {
+  lose: ["fiber", "sugar", "sat_fat", "protein", "sodium"],
+  gain: ["protein", "fiber", "sugar", "sat_fat"],
+  maintain: ["fiber", "sat_fat", "sugar", "protein"],
+  know: ["fiber", "protein", "sugar", "sat_fat"],
+};
+
+const COMPARE_LABEL: Partial<Record<keyof Nutrients, string>> = {
+  fiber: "fibras",
+  protein: "proteína",
+  sugar: "açúcares",
+  sat_fat: "gordura saturada",
+  sodium: "sódio",
+};
+
+const COMPARE_BETTER: Partial<Record<keyof Nutrients, "more" | "less">> = {
+  fiber: "more",
+  protein: "more",
+  sugar: "less",
+  sat_fat: "less",
+  sodium: "less",
+};
+
+/**
+ * Comparação determinística entre o produto analisado e a alternativa, usando
+ * apenas números de fontes confirmadas. Sem vantagem numérica comprovada,
+ * devolve `null` (a interface não inventa elogio).
+ */
+export function compareSuggestion(
+  reference: unknown,
+  alternative: unknown,
+  goal: NutritionGoal = "know",
+): string | null {
+  const ref = sanitizeNutrients(reference);
+  const alt = sanitizeNutrients(alternative);
+  if (!hasNutrition(alt) || !hasNutrition(ref)) return null;
+
+  const parts: string[] = [];
+  for (const key of COMPARE_ORDER[goal] ?? COMPARE_ORDER.know) {
+    if (parts.length >= 2) break;
+    const label = COMPARE_LABEL[key];
+    const direction = COMPARE_BETTER[key];
+    const altValue = alt[key];
+    const refValue = ref[key];
+    if (!label || !direction || altValue == null || refValue == null) continue;
+    const better = direction === "more" ? altValue > refValue : altValue < refValue;
+    if (!better) continue;
+    const format = (value: number) =>
+      key === "sodium" ? fmtSodium(value) : `${fmtNumber(value)} g`;
+    parts.push(`${format(altValue)} de ${label} (o analisado tem ${format(refValue)})`);
+  }
+
+  if (parts.length === 0) return null;
+  return `Por 100 g, tem ${parts.join(" e ")}.`;
 }
 
 const VERDICT_VALUES: FitVerdict[] = ["good", "balanced", "moderation", "alternative"];
@@ -907,6 +1132,290 @@ export function readGoal(store: Store, userId: string): NutritionGoal {
 
 export function writeGoal(store: Store, userId: string, goal: NutritionGoal): void {
   store.setItem(goalKey(userId), goal);
+}
+
+/* ------------------------------------- preferências/restrições (local, opcional) */
+
+export type StoredPreferences = {
+  preferences: string;
+  restrictions: string;
+};
+
+export function preferencesKey(userId: string): string {
+  return `compensai:calorias:preferencias:v1:${userId}`;
+}
+
+/**
+ * Preferências e restrições ficam só no aparelho do usuário (como o objetivo):
+ * nada de dado sensível indo para o banco sem ele pedir.
+ */
+export function readPreferences(store: Store, userId: string): StoredPreferences {
+  const empty: StoredPreferences = { preferences: "", restrictions: "" };
+  const raw = store.getItem(preferencesKey(userId));
+  if (!raw) return empty;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredPreferences>;
+    return {
+      preferences: cleanText(parsed?.preferences, 160) ?? "",
+      restrictions: cleanText(parsed?.restrictions, 160) ?? "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export function writePreferences(
+  store: Store,
+  userId: string,
+  value: StoredPreferences,
+): StoredPreferences {
+  const clean: StoredPreferences = {
+    preferences: cleanText(value.preferences, 160) ?? "",
+    restrictions: cleanText(value.restrictions, 160) ?? "",
+  };
+  if (!clean.preferences && !clean.restrictions) store.setItem(preferencesKey(userId), "{}");
+  else store.setItem(preferencesKey(userId), JSON.stringify(clean));
+  return clean;
+}
+
+/* ------------------------------- ponte com a lista de compras (dados do item) */
+//
+// Tudo aqui é puro: decide QUAIS dados da análise podem entrar na lista e como
+// gravar sem quebrar registros antigos.
+//
+// Regras:
+//  - Nome é obrigatório; sem nome não existe item.
+//  - Preço só existe quando alguém informou um preço de verdade (nunca é
+//    estimado); sem preço fica 0 — o mesmo "não informado" já usado na lista.
+//  - Marca, código de barras, embalagem, nutrientes e fonte só entram quando
+//    vieram de uma fonte confirmada (a IA não preenche esses campos).
+//  - A tabela só aceita as colunas de nutrição depois da migração; se o banco
+//    ainda não as tiver, gravamos o subconjunto antigo.
+
+/** Valores por 100 g/ml guardados junto do item da lista. */
+export type ListItemNutrition = {
+  basis: "100 g" | "100 ml";
+  per100: Nutrients;
+  /** De onde vieram os valores (nunca "chute"): OFF, fonte web ou rótulo. */
+  source_name: string | null;
+  source_url: string | null;
+};
+
+export type ListItemPayload = {
+  name: string;
+  brand: string | null;
+  quantity: number;
+  unit: string;
+  /** 0 = preço não informado (comportamento histórico da lista). */
+  price: number;
+  reference_price: number | null;
+  package_size: number | null;
+  package_unit: string | null;
+  barcode: string | null;
+  nutrition: ListItemNutrition | null;
+};
+
+/** Entrada solta: a lista recebe dados da voz, do comparador e do Calorias. */
+export type ListItemInput = {
+  name?: unknown;
+  brand?: unknown;
+  quantity?: unknown;
+  unit?: unknown;
+  price?: unknown;
+  reference_price?: unknown;
+  package_size?: unknown;
+  package_unit?: unknown;
+  barcode?: unknown;
+  nutrition?: unknown;
+};
+
+/** Colunas que existem na tabela desde o começo. */
+export const LIST_ITEM_BASE_KEYS = [
+  "name",
+  "brand",
+  "quantity",
+  "unit",
+  "price",
+  "reference_price",
+  "package_size",
+  "package_unit",
+] as const;
+
+/** Colunas criadas pela migração opcional de nutrição. */
+export const LIST_ITEM_EXTENDED_KEYS = ["barcode", "nutrition"] as const;
+
+export type ListItemBaseRow = Pick<ListItemPayload, (typeof LIST_ITEM_BASE_KEYS)[number]>;
+export type ListItemExtraRow = { barcode: string | null; nutrition: ListItemNutrition | null };
+
+type BuildListItemOptions = {
+  /** Preço unitário já conhecido e confirmado (nunca estimado). */
+  price?: unknown;
+  quantity?: unknown;
+  unit?: unknown;
+  packageSize?: unknown;
+  packageUnit?: unknown;
+};
+
+function positiveNumber(value: unknown, max = 1_000_000): number | null {
+  const parsed = toNumber(value);
+  if (parsed == null || !Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.min(parsed, max);
+}
+
+function cleanNutrition(value: unknown): ListItemNutrition | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Partial<ListItemNutrition>;
+  const per100 = sanitizeNutrients(raw.per100);
+  if (!hasNutrition(per100)) return null;
+  return {
+    basis: raw.basis === "100 ml" ? "100 ml" : "100 g",
+    per100,
+    source_name: cleanText(raw.source_name, 80),
+    source_url: cleanText(raw.source_url, 500),
+  };
+}
+
+/**
+ * Monta o item da lista a partir de uma alternativa recomendada.
+ * `analysis` é o produto analisado: dele aproveitamos apenas a base (100 g/ml)
+ * para a alternativa que veio sem valores.
+ */
+export function buildListItemPayload(
+  suggestion: FoodSuggestion | null | undefined,
+  analysis?: FoodAnalysis | null,
+  options: BuildListItemOptions = {},
+): ListItemPayload | null {
+  const name = cleanText(suggestion?.name, 90);
+  if (!name) return null;
+
+  const basis: "100 g" | "100 ml" =
+    suggestion?.basis === "100 ml" || (!suggestion?.per100 && analysis?.basis === "100 ml")
+      ? "100 ml"
+      : "100 g";
+
+  const per100 = suggestion?.per100 ? sanitizeNutrients(suggestion.per100) : null;
+  const nutrition: ListItemNutrition | null =
+    per100 && hasNutrition(per100)
+      ? {
+          basis,
+          per100,
+          source_name: cleanText(suggestion?.source_name, 80),
+          source_url: cleanText(suggestion?.source_url, 500),
+        }
+      : null;
+
+  return {
+    name,
+    brand: cleanText(suggestion?.brand, 60),
+    quantity: positiveNumber(options.quantity, 9999) ?? 1,
+    unit: cleanText(options.unit, 12) ?? "un",
+    price: positiveNumber(options.price) ?? 0,
+    reference_price: null,
+    package_size: positiveNumber(options.packageSize, 100_000),
+    package_unit: cleanText(options.packageUnit, 12),
+    barcode: textOf(suggestion?.barcode, 32),
+    nutrition,
+  };
+}
+
+/** Normaliza entrada solta (voz, comparador, Calorias) para a linha da tabela. */
+export function normalizeListItemInput(input: ListItemInput): ListItemPayload | null {
+  const name = cleanText(input.name, 120);
+  if (!name) return null;
+
+  return {
+    name,
+    brand: cleanText(input.brand, 60),
+    quantity: positiveNumber(input.quantity, 9999) ?? 1,
+    unit: cleanText(input.unit, 12) ?? "un",
+    price: positiveNumber(input.price) ?? 0,
+    reference_price: positiveNumber(input.reference_price),
+    package_size: positiveNumber(input.package_size, 100_000),
+    package_unit: cleanText(input.package_unit, 12),
+    barcode: textOf(input.barcode, 32),
+    nutrition: cleanNutrition(input.nutrition),
+  };
+}
+
+/** Subconjunto seguro para bancos que ainda não receberam a migração. */
+export function baseListItemPayload(payload: ListItemPayload): ListItemBaseRow {
+  return {
+    name: payload.name,
+    brand: payload.brand,
+    quantity: payload.quantity,
+    unit: payload.unit,
+    price: payload.price,
+    reference_price: payload.reference_price,
+    package_size: payload.package_size,
+    package_unit: payload.package_unit,
+  };
+}
+
+/** Dados que só podem ser gravados depois da migração. */
+export function extendedListItemPayload(payload: ListItemPayload): ListItemExtraRow {
+  return { barcode: payload.barcode, nutrition: payload.nutrition };
+}
+
+/** Existe algo além do que o banco antigo aceita? */
+export function hasExtendedData(payload: ListItemPayload): boolean {
+  return payload.barcode != null || payload.nutrition != null;
+}
+
+/** Linha completa (base + colunas novas). */
+export function fullListItemPayload(payload: ListItemPayload): ListItemBaseRow & ListItemExtraRow {
+  return { ...baseListItemPayload(payload), ...extendedListItemPayload(payload) };
+}
+
+/**
+ * O erro diz que a coluna nova não existe (migração ainda não aplicada)?
+ * Cobre PostgREST (`42703`, `PGRST204`) e mensagens em texto.
+ */
+export function needsColumnFallback(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  if (code === "42703" || code === "PGRST204") return true;
+  const text = [candidate.message, candidate.details]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ")
+    .toLowerCase();
+  if (!text) return false;
+  return (
+    /column .* does not exist/.test(text) ||
+    /could not find the ['"][^'"]+['"] column/.test(text) ||
+    /schema cache/.test(text)
+  );
+}
+
+/** Um item da lista é o mesmo produto que a recomendação? */
+export function isDuplicateItem(
+  existing: unknown,
+  payload: Pick<ListItemPayload, "name" | "brand">,
+): boolean {
+  const key = normalizeText(payload?.name);
+  if (!key) return false;
+  const items = Array.isArray(existing) ? existing : [];
+  return items.some((item) => {
+    if (!item || typeof item !== "object") return false;
+    const existingKey = normalizeText((item as { name?: unknown }).name);
+    if (!existingKey) return false;
+    if (existingKey === key) return true;
+    // "Aveia em flocos" × "Aveia em flocos finos": mesma coisa na prática.
+    return existingKey.includes(key) || key.includes(existingKey);
+  });
+}
+
+/**
+ * Simula a lista depois da inclusão — usado em teste e na interface para
+ * garantir que o item aparece uma única vez e no fim.
+ */
+export function appendToList<T>(
+  items: unknown,
+  payload: Pick<ListItemPayload, "name" | "brand">,
+): { items: T[]; added: boolean } {
+  const list = (Array.isArray(items) ? items : []) as T[];
+  if (isDuplicateItem(list, payload)) return { items: list, added: false };
+  return { items: [...list, payload as unknown as T], added: true };
 }
 
 /** Texto curto para o histórico ("R$"-free, sem foto). */

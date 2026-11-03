@@ -9,29 +9,46 @@ import {
   EMPTY_NUTRIENTS,
   HISTORY_LIMIT,
   ORIGIN_LABELS,
+  SUGGESTION_FOCUS,
   addHistory,
+  appendToList,
+  baseListItemPayload,
+  buildListItemPayload,
   buildPortion,
+  buildRecommendationContext,
+  cleanListNames,
+  cleanSuggestions,
   clearHistory,
+  compareSuggestion,
   composeAnalysis,
   deriveBenefits,
   deriveCautions,
   evaluateFit,
+  filterSuggestions,
   fmtGrams,
   fmtKcal,
   fmtNumber,
   fmtPortion,
   fmtSodium,
+  fullListItemPayload,
   goalLabel,
+  hasExtendedData,
   hasNutrition,
   historyKey,
   historySummary,
+  isDuplicateItem,
+  isSameProductName,
   nameMatchScore,
   nameTokens,
+  needsColumnFallback,
+  normalizeListItemInput,
   normalizeText,
   nutrientsFromOpenFoodFacts,
   pageToText,
+  preferencesKey,
   readGoal,
   readHistory,
+  readPreferences,
   removeHistory,
   sanitizeNutrients,
   scaleNutrients,
@@ -40,8 +57,10 @@ import {
   textOf,
   toNumber,
   writeGoal,
+  writePreferences,
   type AiFoodPayload,
   type FoodAnalysis,
+  type FoodSuggestion,
   type HistoryEntry,
   type OffMatch,
   type WebMatch,
@@ -789,6 +808,341 @@ check("origem: web", ORIGIN_LABELS.web, "Pesquisa na internet");
 check("origem: sem dados", ORIGIN_LABELS.unknown, "Sem dados confiáveis");
 check("confiança: alta", CONFIDENCE_LABELS.high, "Identificação com alta confiança");
 check("confiança: baixa", CONFIDENCE_LABELS.low, "Identificação incerta");
+
+/* ============ recomendações personalizadas + integração com a lista ============ */
+
+// 1) Recomendação personalizada por objetivo alimentar
+const contextoPerder = buildRecommendationContext({ goal: "lose" });
+ok("objetivo: contexto cita o objetivo do usuário", contextoPerder.includes("Emagrecer com saúde"));
+ok("objetivo: contexto traz o foco do objetivo", contextoPerder.includes(SUGGESTION_FOCUS.lose));
+ok(
+  "objetivo de emagrecer: foco em fibra/saciedade",
+  SUGGESTION_FOCUS.lose.includes("fibras") && SUGGESTION_FOCUS.lose.includes("açúcar"),
+);
+const contextoGanhar = buildRecommendationContext({
+  goal: "gain",
+  preferences: "vegetariano",
+  restrictions: "sem lactose",
+});
+ok("objetivo de ganhar massa: foco em proteína", contextoGanhar.includes("proteína"));
+ok("preferências do usuário entram no contexto", contextoGanhar.includes("vegetariano"));
+ok("restrições do usuário entram no contexto", contextoGanhar.includes("sem lactose"));
+ok(
+  "restrições: pede para evitar itens contrários",
+  contextoGanhar.includes("Evite sugerir itens que as contrariem"),
+);
+
+// 2) Sem objetivo cadastrado: sugestões gerais, ditas como não personalizadas
+const contextoNeutro = buildRecommendationContext({ goal: "know" });
+ok(
+  "sem objetivo: avisa que não são personalizadas",
+  contextoNeutro.includes("NÃO definiu objetivo") &&
+    contextoNeutro.includes("não afirme que são personalizadas"),
+);
+ok("sem objetivo: usa o foco neutro", contextoNeutro.includes(SUGGESTION_FOCUS.know));
+
+// 3) Consideração dos itens existentes na lista
+const contextoLista = buildRecommendationContext({
+  goal: "lose",
+  listItems: [{ name: "Aveia em flocos" }, "  Banana  ", 42, null, { foo: "bar" }],
+});
+ok("lista: nomes entram no contexto", contextoLista.includes("Aveia em flocos, Banana"));
+ok("lista: pede para não repetir", contextoLista.includes("Evite repetir esses itens"));
+check(
+  "lista: campos inválidos são descartados",
+  cleanListNames([{ a: 1 }, null, 7, "  ", "Arroz"]),
+  ["Arroz"],
+);
+check("lista: texto solto vira nomes", cleanListNames("Arroz, Feijão;Leite\nOvos"), [
+  "Arroz",
+  "Feijão",
+  "Leite",
+  "Ovos",
+]);
+check("lista: não repete o mesmo nome", cleanListNames(["Arroz", "arroz", "ARROZ"]), ["Arroz"]);
+check("lista: respeita o limite", cleanListNames(["a", "b", "c"], 2).length, 2);
+check("lista: tipo inesperado vira vazio", cleanListNames(undefined), []);
+
+const sugestoes = [
+  { name: "Aveia em flocos", why: "Mais fibra." },
+  { name: "Iogurte natural", why: "Mais proteína." },
+  { name: "AVEIA em flocos", why: "Repetida." },
+  { name: "Banana", why: "Já está na lista." },
+];
+const filtradas = filterSuggestions(sugestoes, ["Banana"]);
+check(
+  "filtro: remove o que já está na lista",
+  filtradas.map((s) => s.name),
+  ["Aveia em flocos", "Iogurte natural"],
+);
+check("filtro: sem lista mantém as 3 primeiras", filterSuggestions(sugestoes, []).length, 3);
+check(
+  "filtro: nomes parecidos contam como o mesmo item",
+  isSameProductName("Aveia", "Aveia em flocos"),
+  true,
+);
+
+// 4) Comparação determinística com o produto analisado (nunca inventa número)
+check(
+  "comparação (emagrecer): fibras a mais",
+  compareSuggestion(
+    sanitizeNutrients({ kcal: 400, fiber: 2, sugar: 30 }),
+    sanitizeNutrients({ kcal: 350, fiber: 8, sugar: 10 }),
+    "lose",
+  ),
+  "Por 100 g, tem 8,0 g de fibras (o analisado tem 2,0 g) e 10,0 g de açúcares (o analisado tem 30,0 g).",
+);
+check(
+  "comparação (ganhar massa): proteína a mais",
+  compareSuggestion(
+    sanitizeNutrients({ protein: 6, kcal: 200 }),
+    sanitizeNutrients({ protein: 20, kcal: 250 }),
+    "gain",
+  ),
+  "Por 100 g, tem 20,0 g de proteína (o analisado tem 6,0 g).",
+);
+check(
+  "comparação: sem vantagem devolve null",
+  compareSuggestion(sanitizeNutrients({ fiber: 9 }), sanitizeNutrients({ fiber: 2 }), "lose"),
+  null,
+);
+check(
+  "comparação: sem dados do produto devolve null",
+  compareSuggestion({}, { fiber: 5 }, "lose"),
+  null,
+);
+
+// 5) A alternativa da IA é saneada: valores só com fonte, marca só se válida
+const saneadas = cleanSuggestions([
+  {
+    name: "Aveia em flocos",
+    brand: "  Quaker  ",
+    why: "Mais fibras.",
+    compare: "mais fibras",
+    barcode: "7891000053508",
+    per100: { kcal: 389, fiber: 9.1, sugar: "x" },
+    basis: "100 ml",
+    source_name: "Open Food Facts",
+    source_url: "https://world.openfoodfacts.org/product/789",
+  },
+  { name: "   ", why: "sem nome" },
+  "texto solto",
+  null,
+]);
+check("alternativas: sobra só a válida", saneadas.length, 1);
+check("alternativas: nome limpo", saneadas[0].name, "Aveia em flocos");
+check("alternativas: marca limpa", saneadas[0].brand, "Quaker");
+check("alternativas: código de barras preservado", saneadas[0].barcode, "7891000053508");
+check("alternativas: valor inválido não vira número", saneadas[0].per100?.sugar, null);
+check("alternativas: base válida é mantida", saneadas[0].basis, "100 ml");
+check("alternativas: fonte mantida", saneadas[0].source_name, "Open Food Facts");
+check("alternativas: link só http(s)", saneadas[0].source_url?.startsWith("https://"), true);
+check(
+  "alternativas: no máximo 3",
+  cleanSuggestions(new Array(6).fill({ name: "A", why: "B" })).length,
+  3,
+);
+check("alternativas: tipo inesperado vira vazio", cleanSuggestions(undefined), []);
+check(
+  "alternativas: link inválido é descartado",
+  cleanSuggestions([{ name: "A", why: "B", source_url: "javascript:alert(1)" }])[0].source_url,
+  undefined,
+);
+
+// 6) Adicionar à lista preservando nome, marca, embalagem, nutrição e fonte
+const analise: FoodAnalysis = comRotulo;
+const sugestaoRica: FoodSuggestion = {
+  name: "Aveia em flocos",
+  why: "Mais fibras.",
+  brand: "Quaker",
+  barcode: "7891000053508",
+  per100: sanitizeNutrients({ kcal: 389, fiber: 9.1, protein: 13.9 }),
+  basis: "100 g",
+  source_name: "Open Food Facts",
+  source_url: "https://world.openfoodfacts.org/product/7891000053508",
+};
+const item = buildListItemPayload(sugestaoRica, analise, {
+  packageSize: "500",
+  packageUnit: "g",
+});
+ok("lista: item criado", item !== null);
+check("lista: nome preservado", item?.name, "Aveia em flocos");
+check("lista: marca preservada", item?.brand, "Quaker");
+check("lista: código de barras preservado", item?.barcode, "7891000053508");
+check("lista: embalagem preservada", [item?.package_size, item?.package_unit], [500, "g"]);
+check("lista: nutrição preservada", item?.nutrition?.per100.fiber, 9.1);
+check("lista: base da nutrição preservada", item?.nutrition?.basis, "100 g");
+check("lista: fonte preservada", item?.nutrition?.source_name, "Open Food Facts");
+check(
+  "lista: link da fonte preservado",
+  item?.nutrition?.source_url?.includes("openfoodfacts"),
+  true,
+);
+check("lista: quantidade/medida padrão", [item?.quantity, item?.unit], [1, "un"]);
+
+// 7) Preço somente quando conhecido
+check("preço: desconhecido fica vazio (0)", item?.price, 0);
+check(
+  "preço: informado é preservado",
+  buildListItemPayload(sugestaoRica, analise, { price: "13,49" })?.price,
+  13.49,
+);
+check(
+  "preço: valor absurdo não é aceito",
+  buildListItemPayload(sugestaoRica, analise, { price: -5 })?.price,
+  0,
+);
+
+// Sem valores confirmados na alternativa: nada de nutrição inventada
+const itemSimples = buildListItemPayload({ name: "Banana", why: "Potássio." }, analise);
+check("lista: alternativa sem fonte não ganha nutrição", itemSimples?.nutrition, null);
+check("lista: alternativa sem fonte não ganha código", itemSimples?.barcode, null);
+check("lista: sem marca não inventa marca", itemSimples?.brand, null);
+check("lista: nome obrigatório", buildListItemPayload({ name: "   ", why: "x" }), null);
+check("lista: entrada nula é recusada", buildListItemPayload(null), null);
+
+// 8) Prevenção de duplicação + atualização correta da lista
+const listaAtual = [{ name: "Arroz" }, { name: "Feijão" }];
+const primeira = appendToList(listaAtual, item!);
+check("duplicação: item novo entra", primeira.added, true);
+check("duplicação: lista cresce", primeira.items.length, 3);
+check(
+  "duplicação: item entra no fim",
+  (primeira.items[2] as { name: string }).name,
+  "Aveia em flocos",
+);
+const segunda = appendToList(primeira.items as { name?: unknown }[], item!);
+check("duplicação: adicionar de novo não duplica", segunda.added, false);
+check("duplicação: lista permanece igual", segunda.items.length, 3);
+check(
+  "duplicação: nome parecido também é detectado",
+  isDuplicateItem([{ name: "Aveia em flocos finos" }], { name: "Aveia em flocos", brand: null }),
+  true,
+);
+check(
+  "duplicação: produto diferente passa",
+  isDuplicateItem([{ name: "Arroz" }], { name: "Aveia em flocos", brand: null }),
+  false,
+);
+check(
+  "duplicação: lista vazia não duplica",
+  isDuplicateItem([], { name: "Arroz", brand: null }),
+  false,
+);
+check(
+  "duplicação: entrada inválida não quebra",
+  isDuplicateItem(undefined as unknown as [], { name: "Arroz", brand: null }),
+  false,
+);
+check(
+  "duplicação: itens antigos sem nome são ignorados",
+  isDuplicateItem([{ name: null }, { name: 42 }], { name: "Arroz", brand: null }),
+  false,
+);
+
+// 9) Compatibilidade com registros antigos (subconjunto de colunas)
+const base = baseListItemPayload(item!);
+check("compatível: base não envia colunas novas", "barcode" in base || "nutrition" in base, false);
+check("compatível: base mantém os campos antigos", base.name, "Aveia em flocos");
+check("compatível: base mantém preço", base.price, 0);
+check("compatível: base mantém referência", base.reference_price, null);
+const completo = fullListItemPayload(item!);
+check("completo: envia código de barras", completo.barcode, "7891000053508");
+check("completo: envia nutrição", completo.nutrition?.per100.fiber, 9.1);
+check("completo: contém todos os campos antigos", completo.name, "Aveia em flocos");
+check("detecção: item rico tem dados novos", hasExtendedData(item!), true);
+check("detecção: item simples não tem dados novos", hasExtendedData(itemSimples!), false);
+check("fallback: código 42703", needsColumnFallback({ code: "42703" }), true);
+check("fallback: código PGRST204", needsColumnFallback({ code: "PGRST204" }), true);
+check(
+  "fallback: mensagem de coluna inexistente",
+  needsColumnFallback({ message: 'column "barcode" does not exist' }),
+  true,
+);
+check(
+  "fallback: cache de schema",
+  needsColumnFallback({ message: "Could not find the 'nutrition' column in the schema cache" }),
+  true,
+);
+check("fallback: outro erro não cai no fallback", needsColumnFallback({ code: "23505" }), false);
+check("fallback: erro vazio", needsColumnFallback(null), false);
+check("fallback: erro de texto solto", needsColumnFallback("boom"), false);
+
+// Registro antigo (sem nutrição) continua válido ao ser relido
+const antigo = normalizeListItemInput({
+  name: "  Leite integral  ",
+  brand: "",
+  quantity: 2,
+  unit: "L",
+  price: 5.5,
+  reference_price: null,
+  package_size: 1000,
+  package_unit: "ml",
+});
+check("antigo: nome limpo", antigo?.name, "Leite integral");
+check("antigo: marca vazia vira null", antigo?.brand, null);
+check("antigo: quantidade preservada", antigo?.quantity, 2);
+check("antigo: unidade preservada", antigo?.unit, "L");
+check("antigo: preço preservado", antigo?.price, 5.5);
+check("antigo: nutrição ausente vira null", antigo?.nutrition, null);
+check("antigo: código ausente vira null", antigo?.barcode, null);
+check("antigo: sem nome é recusado", normalizeListItemInput({ quantity: 1 }), null);
+
+// 10) Tratamento seguro de dados externos com tipos inesperados
+const estranho = normalizeListItemInput({
+  name: "  Café  ",
+  brand: { a: 1 },
+  quantity: "2",
+  unit: [1, 2],
+  price: "12,90",
+  package_size: "500 g",
+  package_unit: 123,
+  barcode: 7891000053508,
+  nutrition: { basis: "100 ml", per100: { kcal: "10", fiber: ["x"] }, source_url: 42 },
+});
+check("externo: nome com espaços é limpo", estranho?.name, "Café");
+check("externo: marca com objeto vira null", estranho?.brand, null);
+check("externo: quantidade em texto é convertida", estranho?.quantity, 2);
+check("externo: unidade com array cai no padrão", estranho?.unit, "un");
+check("externo: preço pt-BR é convertido", estranho?.price, 12.9);
+check("externo: embalagem em texto é convertida", estranho?.package_size, 500);
+check("externo: unidade da embalagem numérica vira null", estranho?.package_unit, null);
+check("externo: código numérico vira texto", estranho?.barcode, "7891000053508");
+check("externo: base da nutrição validada", estranho?.nutrition?.basis, "100 ml");
+check("externo: valor em texto vira número", estranho?.nutrition?.per100.kcal, 10);
+check("externo: valor em array é descartado", estranho?.nutrition?.per100.fiber, null);
+check("externo: link numérico é descartado", estranho?.nutrition?.source_url, null);
+check(
+  "externo: nutrição com tipo inesperado é ignorada",
+  normalizeListItemInput({ name: "X", nutrition: "kcal 100" })?.nutrition,
+  null,
+);
+check(
+  "externo: objeto de análise inválido não quebra",
+  buildListItemPayload({
+    name: "X",
+    why: "Y",
+    per100: "n/d",
+    basis: 123,
+  } as unknown as FoodSuggestion)?.nutrition,
+  null,
+);
+
+// Preferências salvas no aparelho (nada sensível no banco)
+const storePrefs = fakeStore();
+check("preferências: vazio por padrão", readPreferences(storePrefs, "u1"), {
+  preferences: "",
+  restrictions: "",
+});
+writePreferences(storePrefs, "u1", { preferences: "  vegetariano  ", restrictions: "" });
+check("preferências: texto limpo", readPreferences(storePrefs, "u1").preferences, "vegetariano");
+check(
+  "preferências: restrição vazia continua vazia",
+  readPreferences(storePrefs, "u1").restrictions,
+  "",
+);
+storePrefs.setItem(preferencesKey("u2"), "{quebrado");
+check("preferências: JSON inválido não quebra", readPreferences(storePrefs, "u2").preferences, "");
 
 console.log(`\n${passed} passaram, ${failures} falharam`);
 if (failures > 0) process.exit(1);

@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  baseListItemPayload,
+  fullListItemPayload,
+  hasExtendedData,
+  needsColumnFallback,
+  normalizeListItemInput,
+  type ListItemInput,
+  type ListItemNutrition,
+} from "@/lib/nutrition";
 
 export type ListItem = {
   id: string;
@@ -13,6 +22,9 @@ export type ListItem = {
   checked: boolean;
   package_size: number | null;
   package_unit: string | null;
+  /** Colunas opcionais: só existem depois da migração de nutrição. */
+  barcode?: string | null;
+  nutrition?: ListItemNutrition | null;
 };
 
 async function userId() {
@@ -100,10 +112,7 @@ export function useListMutations(listId?: string) {
   /** Remove todos os itens da lista ativa. */
   const clearAll = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from("shopping_list_items")
-        .delete()
-        .eq("list_id", listId!);
+      const { error } = await supabase.from("shopping_list_items").delete().eq("list_id", listId!);
       if (error) throw error;
     },
     onSuccess: invalidate,
@@ -118,9 +127,7 @@ export function useListMutations(listId?: string) {
         .update({ name, status: "saved" })
         .eq("id", listId!);
       if (error) throw error;
-      const { error: createError } = await supabase
-        .from("shopping_lists")
-        .insert({ user_id: uid });
+      const { error: createError } = await supabase.from("shopping_lists").insert({ user_id: uid });
       if (createError) throw createError;
     },
     onSuccess: invalidate,
@@ -129,15 +136,11 @@ export function useListMutations(listId?: string) {
   /** Renomeia a lista ativa (guarda o nome exatamente como digitado). */
   const renameList = useMutation({
     mutationFn: async (name: string) => {
-      const { error } = await supabase
-        .from("shopping_lists")
-        .update({ name })
-        .eq("id", listId!);
+      const { error } = await supabase.from("shopping_lists").update({ name }).eq("id", listId!);
       if (error) throw error;
     },
     onSuccess: invalidate,
   });
-
 
   /** Torna uma lista salva a lista ativa (a ativa atual vira salva). */
   const loadList = useMutation({
@@ -183,20 +186,25 @@ export function useItemMutations(listId?: string) {
   };
 
   const add = useMutation({
-    mutationFn: async (item: Partial<ListItem>) => {
+    mutationFn: async (item: ListItemInput) => {
       const uid = await userId();
-      const { error } = await supabase.from("shopping_list_items").insert({
-        list_id: listId!,
-        user_id: uid,
-        name: item.name!,
-        brand: item.brand ?? null,
-        quantity: item.quantity ?? 1,
-        unit: item.unit ?? "un",
-        price: item.price ?? 0,
-        reference_price: item.reference_price ?? null,
-        package_size: item.package_size ?? null,
-        package_unit: item.package_unit ?? null,
-      });
+      const payload = normalizeListItemInput(item);
+      if (!payload) throw new Error("Informe o nome do produto.");
+
+      const row = { list_id: listId!, user_id: uid };
+      const extended = hasExtendedData(payload);
+
+      const insert = (data: Record<string, unknown>) =>
+        supabase.from("shopping_list_items").insert({ ...row, ...data } as never);
+
+      let { error } = await insert(
+        extended ? fullListItemPayload(payload) : baseListItemPayload(payload),
+      );
+
+      // Banco ainda sem a migração de nutrição: grava o que já existia.
+      if (error && extended && needsColumnFallback(error)) {
+        ({ error } = await insert(baseListItemPayload(payload)));
+      }
       if (error) throw error;
     },
     onSuccess: invalidate,
@@ -224,9 +232,7 @@ export function useItemMutations(listId?: string) {
 /** Totais calculados em tempo real a partir dos itens. */
 export function listTotals(items: ListItem[]) {
   const total = items.reduce((sum, i) => sum + i.quantity * i.price, 0);
-  const spent = items
-    .filter((i) => i.checked)
-    .reduce((sum, i) => sum + i.quantity * i.price, 0);
+  const spent = items.filter((i) => i.checked).reduce((sum, i) => sum + i.quantity * i.price, 0);
   const realSavings = items
     .filter((i) => i.checked && i.reference_price)
     .reduce((sum, i) => sum + Math.max(0, (i.reference_price! - i.price) * i.quantity), 0);

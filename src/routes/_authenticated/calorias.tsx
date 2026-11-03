@@ -31,7 +31,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveList, useItemMutations, useListItems } from "@/hooks/useList";
-import { productKey } from "@/lib/voiceList";
 import { analyzeFoodPhoto, researchFoodByName } from "@/lib/nutrition.functions";
 import {
   CONFIDENCE_HINTS,
@@ -41,6 +40,7 @@ import {
   ORIGIN_LABELS,
   VERDICTS,
   addHistory,
+  buildListItemPayload,
   clearHistory,
   fmtGrams,
   fmtKcal,
@@ -49,18 +49,23 @@ import {
   fmtSodium,
   goalLabel,
   historySummary,
+  isDuplicateItem,
   readGoal,
   readHistory,
+  readPreferences,
   removeHistory,
   scaleNutrients,
   toNumber,
   writeGoal,
+  writePreferences,
   type Confidence,
   type DataOrigin,
   type FoodAnalysis,
   type FoodSuggestion,
   type HistoryEntry,
+  type ListItemPayload,
   type NutritionGoal,
+  type StoredPreferences,
 } from "@/lib/nutrition";
 
 export const Route = createFileRoute("/_authenticated/calorias")({
@@ -123,6 +128,7 @@ function CaloriasPage() {
 
   const [userId, setUserId] = useState<string | null>(null);
   const [goal, setGoal] = useState<NutritionGoal>("know");
+  const [prefs, setPrefs] = useState<StoredPreferences>({ preferences: "", restrictions: "" });
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<FoodAnalysis | null>(null);
@@ -134,7 +140,10 @@ function CaloriasPage() {
   const { data: items = [] } = useListItems(list?.id);
   const { add } = useItemMutations(list?.id);
 
-  const existingKeys = useMemo(() => new Set(items.map((item) => productKey(item.name))), [items]);
+  const isInList = useCallback(
+    (name: string) => isDuplicateItem(items, { name, brand: null }),
+    [items],
+  );
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -142,6 +151,7 @@ function CaloriasPage() {
       setUserId(id);
       if (!id) return;
       setGoal(readGoal(STORE, id));
+      setPrefs(readPreferences(STORE, id));
       setHistory(readHistory(STORE, id));
     });
   }, []);
@@ -150,6 +160,25 @@ function CaloriasPage() {
     setGoal(value);
     if (userId) writeGoal(STORE, userId, value);
   };
+
+  const updatePrefs = (patch: Partial<StoredPreferences>) => {
+    setPrefs((current) => {
+      const next = { ...current, ...patch };
+      if (userId) writePreferences(STORE, userId, next);
+      return next;
+    });
+  };
+
+  /** Objetivo + preferências + lista: é isso que a IA recebe para personalizar. */
+  const recommendationContext = useMemo(
+    () => ({
+      goal,
+      preferences: prefs.preferences || undefined,
+      restrictions: prefs.restrictions || undefined,
+      listItems: items.map((item) => item.name).slice(0, 20),
+    }),
+    [goal, prefs.preferences, prefs.restrictions, items],
+  );
 
   const remember = useCallback(
     (result: FoodAnalysis) => {
@@ -174,7 +203,7 @@ function CaloriasPage() {
       try {
         const image = await shrink(file);
         setPreview(image);
-        const result = await analyze({ data: { image, goal } });
+        const result = await analyze({ data: { image, ...recommendationContext } });
         setAnalysis(result);
         remember(result);
       } catch (e) {
@@ -184,7 +213,7 @@ function CaloriasPage() {
         setLoading(false);
       }
     },
-    [analyze, goal, remember],
+    [analyze, recommendationContext, remember],
   );
 
   const onResearched = useCallback(
@@ -215,14 +244,20 @@ function CaloriasPage() {
   };
 
   const addSuggestion = async (suggestion: FoodSuggestion) => {
-    const key = productKey(suggestion.name);
-    if (existingKeys.has(key)) {
-      toast.info(`${suggestion.name} já está na sua lista.`);
+    const payload: ListItemPayload | null = buildListItemPayload(suggestion, analysis);
+    if (!payload) {
+      toast.error("Não consegui identificar o nome desse item.");
+      return;
+    }
+    if (isDuplicateItem(items, payload)) {
+      toast.info(`${payload.name} já está na sua lista.`);
       return;
     }
     try {
-      await add.mutateAsync({ name: suggestion.name, quantity: 1, unit: "un" });
-      toast.success(`${suggestion.name} adicionado à sua lista.`);
+      // Vai tudo o que foi confirmado: nome, marca, embalagem, código de
+      // barras, nutrientes por 100 g/ml e a fonte. Preço só quando existir.
+      await add.mutateAsync(payload);
+      toast.success(`${payload.name} adicionado à sua lista.`);
     } catch {
       toast.error("Não foi possível adicionar à lista.");
     }
@@ -325,7 +360,13 @@ function CaloriasPage() {
         </div>
       </section>
 
-      <NameSearch goal={goal} onFound={onResearched} />
+      <NameSearch
+        goal={goal}
+        preferences={recommendationContext.preferences}
+        restrictions={recommendationContext.restrictions}
+        listItems={recommendationContext.listItems}
+        onFound={onResearched}
+      />
 
       {/* Objetivo */}
       <section className="glass p-4">
@@ -365,6 +406,35 @@ function CaloriasPage() {
             fotografe de novo para reavaliar com o objetivo novo.
           </p>
         )}
+
+        {/* Preferências e restrições: só o que o usuário escrever é usado */}
+        <div className="mt-3 space-y-2 rounded-xl border border-border bg-secondary/25 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Restrições e preferências (opcional)
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input
+              value={prefs.preferences}
+              maxLength={160}
+              onChange={(event) => updatePrefs({ preferences: event.target.value })}
+              placeholder="Preferências (ex.: vegetariano)"
+              aria-label="Preferências alimentares"
+              className="h-10"
+            />
+            <Input
+              value={prefs.restrictions}
+              maxLength={160}
+              onChange={(event) => updatePrefs({ restrictions: event.target.value })}
+              placeholder="Restrições (ex.: sem lactose)"
+              aria-label="Restrições e alergias alimentares"
+              className="h-10"
+            />
+          </div>
+          <p className="text-[10px] leading-tight text-muted-foreground">
+            Usamos apenas o que você escrever aqui para personalizar as recomendações — nada é
+            presumido. Fica salvo só neste aparelho.
+          </p>
+        </div>
       </section>
 
       {error && (
@@ -380,7 +450,13 @@ function CaloriasPage() {
       )}
 
       {analysis && (
-        <AnalysisCard analysis={analysis} preview={preview} onAdd={addSuggestion} onClose={reset} />
+        <AnalysisCard
+          analysis={analysis}
+          preview={preview}
+          onAdd={addSuggestion}
+          isInList={isInList}
+          onClose={reset}
+        />
       )}
 
       {/* Histórico */}
@@ -477,11 +553,13 @@ function AnalysisCard({
   analysis,
   preview,
   onAdd,
+  isInList,
   onClose,
 }: {
   analysis: FoodAnalysis;
   preview: string | null;
   onAdd: (suggestion: FoodSuggestion) => void | Promise<void>;
+  isInList: (name: string) => boolean;
   onClose: () => void;
 }) {
   const origin = ORIGIN_STYLE[analysis.origin];
@@ -800,27 +878,99 @@ function AnalysisCard({
             Alternativas para variar sem perder o equilíbrio. Toque para adicionar à sua lista
             atual.
           </p>
+          {analysis.goal === "know" ? (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+              <Info className="mt-0.5 size-3.5 shrink-0" />
+              Sugestões gerais: você ainda não definiu um objetivo, então elas não são
+              personalizadas.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Escolhidas para o objetivo “{goalLabel(analysis.goal)}”.
+            </p>
+          )}
           <ul className="mt-3 space-y-2">
-            {analysis.better_choices.map((suggestion) => (
-              <li
-                key={suggestion.name}
-                className="rounded-xl border border-border bg-secondary/30 p-3"
-              >
-                <p className="text-sm font-semibold">{suggestion.name}</p>
-                <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                  {suggestion.why}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 h-9 w-full border-primary/40 text-primary sm:w-auto"
-                  onClick={() => void onAdd(suggestion)}
+            {analysis.better_choices.map((suggestion) => {
+              const already = isInList(suggestion.name);
+              const basis = suggestion.basis ?? "100 g";
+              return (
+                <li
+                  key={`${suggestion.name}-${suggestion.brand ?? ""}`}
+                  className="rounded-xl border border-border bg-secondary/30 p-3"
                 >
-                  <ShoppingCart /> Adicionar à minha lista de compras
-                </Button>
-              </li>
-            ))}
+                  <p className="text-sm font-semibold">
+                    {suggestion.name}
+                    {suggestion.brand && (
+                      <span className="font-normal text-muted-foreground">
+                        {" "}
+                        · {suggestion.brand}
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                    {suggestion.why}
+                  </p>
+                  {suggestion.compare && (
+                    <p className="mt-1 text-[11px] leading-snug font-medium text-primary">
+                      {suggestion.compare}
+                    </p>
+                  )}
+                  {suggestion.per100 && (
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      <span className="font-semibold">Por {basis}:</span>{" "}
+                      {[
+                        fmtKcal(suggestion.per100.kcal),
+                        suggestion.per100.fiber != null
+                          ? `${fmtGrams(suggestion.per100.fiber)} de fibras`
+                          : null,
+                        suggestion.per100.protein != null
+                          ? `${fmtGrams(suggestion.per100.protein)} de proteína`
+                          : null,
+                        suggestion.per100.sugar != null
+                          ? `${fmtGrams(suggestion.per100.sugar)} de açúcares`
+                          : null,
+                        suggestion.per100.sat_fat != null
+                          ? `${fmtGrams(suggestion.per100.sat_fat)} de saturadas`
+                          : null,
+                        suggestion.per100.sodium != null
+                          ? `${fmtSodium(suggestion.per100.sodium)} de sódio`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  )}
+                  {suggestion.source_name && (
+                    <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
+                      Fonte:{" "}
+                      {suggestion.source_url ? (
+                        <a
+                          href={suggestion.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 font-semibold underline"
+                        >
+                          {suggestion.source_name} <ExternalLink className="size-2.5" />
+                        </a>
+                      ) : (
+                        suggestion.source_name
+                      )}
+                    </p>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-9 w-full border-primary/40 text-primary sm:w-auto"
+                    disabled={already}
+                    onClick={() => void onAdd(suggestion)}
+                  >
+                    <ShoppingCart />
+                    {already ? "Já está na sua lista" : "Adicionar à minha lista de compras"}
+                  </Button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -847,9 +997,15 @@ function AnalysisCard({
 
 function NameSearch({
   goal,
+  preferences,
+  restrictions,
+  listItems,
   onFound,
 }: {
   goal: NutritionGoal;
+  preferences?: string | undefined;
+  restrictions?: string | undefined;
+  listItems?: string[] | undefined;
   onFound: (analysis: FoodAnalysis) => void;
 }) {
   const research = useServerFn(researchFoodByName);
@@ -867,7 +1023,14 @@ function NameSearch({
     setBusy(true);
     try {
       const result = await research({
-        data: { name: clean, brand: brand.trim() || undefined, goal },
+        data: {
+          name: clean,
+          brand: brand.trim() || undefined,
+          goal,
+          preferences,
+          restrictions,
+          listItems,
+        },
       });
       onFound(result);
     } catch (error) {
