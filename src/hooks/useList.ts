@@ -211,7 +211,7 @@ export function useItemMutations(listId?: string) {
   });
 
   const update = useMutation({
-    mutationFn: async ({ id, ...patch }: Partial<ListItem> & { id: string }) => {
+    mutationFn: async ({ id, barcode: _barcode, nutrition: _nutrition, ...patch }: Partial<ListItem> & { id: string }) => {
       const { error } = await supabase.from("shopping_list_items").update(patch).eq("id", id);
       if (error) throw error;
     },
