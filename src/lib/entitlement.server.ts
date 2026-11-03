@@ -16,6 +16,7 @@ import {
   applyEventToBilling,
   buildCheckoutUrl,
   computeEntitlement,
+  grantAdminAccess,
   parsePlanMap,
   signCallbackToken,
   verifyCallbackToken,
@@ -31,6 +32,7 @@ import {
   type SubscriptionStatus,
 } from "./entitlement";
 import { isSameSignupMailbox, normalizeSignupEmail } from "./trialOffer";
+import { isAdminEmail } from "./adminAccount";
 
 export const BILLING_META_KEY = "compensai";
 
@@ -282,6 +284,10 @@ export async function hasAccountForEmailFamily(email: string): Promise<boolean> 
 /**
  * Entitlement do usuário. Na primeira leitura grava `trial_started_at` (a
  * "primeira ativação" da conta) — uma única vez, com o relógio do servidor.
+ *
+ * Contas administrativas (ver `adminAccount.ts`) recebem acesso premium
+ * vitalício: a decisão usa o e-mail da conta autenticada, buscado aqui na
+ * service role — o cliente não participa da decisão.
  */
 export async function getEntitlementForUser(userId: string): Promise<Entitlement> {
   const now = Date.now();
@@ -297,7 +303,8 @@ export async function getEntitlementForUser(userId: string): Promise<Entitlement
     await writeBilling(userId, user.app_metadata ?? {}, billing);
   }
 
-  return computeEntitlement(billing, now);
+  const entitlement = computeEntitlement(billing, now);
+  return isAdminEmail(user.email) ? grantAdminAccess(entitlement) : entitlement;
 }
 
 /** Usado pelas server functions premium: bloqueia quando não há acesso. */

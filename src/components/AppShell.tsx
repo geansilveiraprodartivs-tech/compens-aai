@@ -2,8 +2,10 @@ import { Link } from "@tanstack/react-router";
 import { Home, ShoppingCart, Scale, PiggyBank, User, MapPin, QrCode, Flame } from "lucide-react";
 import type { ReactNode } from "react";
 import { Brand } from "@/components/Brand";
+import { PremiumChip } from "@/components/PremiumBadge";
 import { TrialBanner } from "@/components/SubscriptionGate";
 import { useProfile } from "@/hooks/useProfile";
+import { useEntitlement } from "@/hooks/useEntitlement";
 
 const NAV = [
   { to: "/app", label: "Início", icon: Home },
@@ -17,12 +19,17 @@ const NAV = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { data: profile } = useProfile();
+  const { data: entitlement } = useEntitlement();
+  const isPremium = !!entitlement?.admin;
 
   return (
     <div className="min-h-screen pb-24 md:pb-0">
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 px-4 py-3 backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
-          <Brand size={34} />
+          <span className="flex min-w-0 items-center gap-2">
+            <Brand size={34} />
+            {isPremium && <PremiumChip />}
+          </span>
           <Link
             to="/perfil"
             className="flex max-w-[45%] items-center gap-1.5 rounded-lg border border-border bg-secondary/60 px-3 py-1.5 text-xs text-muted-foreground"
@@ -36,6 +43,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="mx-auto w-full max-w-6xl md:grid md:min-h-screen md:grid-cols-[230px_1fr] md:gap-6 md:p-6">
         <aside className="sticky top-6 hidden h-[calc(100vh-3rem)] flex-col rounded-xl border border-sidebar-border bg-sidebar p-5 md:flex">
           <Brand size={40} />
+          {isPremium && <PremiumChip className="mt-3 self-start" />}
           <nav className="mt-10 space-y-2">
             {NAV.map(({ to, label, icon: Icon }) => (
               <Link

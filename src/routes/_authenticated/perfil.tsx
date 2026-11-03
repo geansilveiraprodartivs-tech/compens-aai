@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
+import { PremiumCard, PremiumChip } from "@/components/PremiumBadge";
 import { PlanChoices } from "@/components/SubscriptionGate";
 import { useEntitlement } from "@/hooks/useEntitlement";
 import { describeEntitlement, planSummary, type PlanSummary } from "@/lib/entitlement";
@@ -19,6 +20,8 @@ const TONE_CLASS: Record<PlanSummary["tone"], string> = {
   paid: "bg-success/15 text-success",
   blocked: "bg-destructive/15 text-destructive",
   pending: "bg-secondary text-muted-foreground",
+  premium:
+    "bg-gradient-to-r from-amber-200 to-amber-400 text-amber-950 shadow-[0_6px_16px_-8px_rgba(245,190,80,0.9)]",
 };
 
 export const Route = createFileRoute("/_authenticated/perfil")({
@@ -63,7 +66,10 @@ function PerfilPage() {
     <div className="space-y-5">
       <h1 className="flex items-center gap-2 text-xl font-bold">
         <User className="size-5 text-accent" /> Perfil
+        {entitlement?.admin && <PremiumChip />}
       </h1>
+
+      {entitlement?.admin && <PremiumCard />}
 
       <AvatarEditor
         path={profile?.avatar_url ?? null}
@@ -149,7 +155,13 @@ function PerfilPage() {
           </dl>
         )}
 
-        <PlanChoices />
+        {entitlement?.admin ? (
+          <p className="rounded-xl border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-[12px] leading-snug text-amber-100">
+            Conta administradora: o acesso premium é vitalício e não precisa de assinatura.
+          </p>
+        ) : (
+          <PlanChoices />
+        )}
       </section>
 
       <Button variant="ghost" onClick={signOut} className="w-full text-muted-foreground">

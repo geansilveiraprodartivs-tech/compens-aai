@@ -139,6 +139,7 @@ export const MAX_EVENT_LOG = 50;
 export const MAX_PROCESSED_KEYS = 50;
 
 export type AccessState =
+  | "admin"
   | "trial"
   | "trial_expired"
   | "monthly_active"
@@ -161,6 +162,8 @@ export type Entitlement = {
   trial_hours_remaining: number | null;
   subscription_expires_at: string | null;
   payment_pending: boolean;
+  /** Conta administradora do app (acesso premium vitalício, decidido no servidor). */
+  admin?: boolean;
   server_now: string;
 };
 
@@ -414,9 +417,32 @@ export function computeEntitlement(billing: StoredBilling, nowMs: number): Entit
   };
 }
 
+/**
+ * Acesso da conta administradora do app: premium vitalício.
+ *
+ * É um "envelopamento" do entitlement calculado normalmente — o trial e a
+ * assinatura continuam registrados (aparecem no perfil), mas quem manda é o
+ * acesso liberado. Chamado apenas pelo servidor, depois de conferir o e-mail
+ * autenticado com `isAdminEmail`.
+ */
+export function grantAdminAccess(base: Entitlement): Entitlement {
+  return {
+    ...base,
+    state: "admin",
+    has_access: true,
+    plan: null,
+    status: null,
+    subscription_expires_at: null,
+    payment_pending: false,
+    admin: true,
+  };
+}
+
 /** Texto curto de status para o painel/gate. */
 export function describeEntitlement(e: Entitlement): string {
   switch (e.state) {
+    case "admin":
+      return "Conta administrativa — acesso premium vitalício";
     case "trial":
       return e.trial_hours_remaining !== null
         ? `Teste grátis ativo — ${formatRemaining(e.trial_hours_remaining)} restantes`
@@ -453,23 +479,30 @@ export type PlanSummary = {
   statusLabel: string;
   validityLabel: string;
   accessLabel: string;
-  tone: "free" | "paid" | "blocked" | "pending";
+  tone: "free" | "paid" | "blocked" | "pending" | "premium";
 };
 
 /** Resumo para a seção "Meu plano" (plano, situação, validade e tipo de acesso). */
 export function planSummary(e: Entitlement): PlanSummary {
   const planName =
-    e.state === "trial" || e.state === "trial_expired"
-      ? "Teste gratuito"
-      : e.plan
-        ? PLANS[e.plan].name
-        : "Sem plano ativo";
+    e.state === "admin"
+      ? "Administrador"
+      : e.state === "trial" || e.state === "trial_expired"
+        ? "Teste gratuito"
+        : e.plan
+          ? PLANS[e.plan].name
+          : "Sem plano ativo";
 
   let statusLabel: string;
   let accessLabel: string;
   let tone: PlanSummary["tone"] = "blocked";
 
   switch (e.state) {
+    case "admin":
+      statusLabel = "Conta administrativa";
+      accessLabel = "Premium vitalício";
+      tone = "premium";
+      break;
     case "trial":
       statusLabel = "Teste gratuito ativo";
       accessLabel = "Acesso gratuito";
@@ -528,6 +561,7 @@ export function planSummary(e: Entitlement): PlanSummary {
 }
 
 function formatValidity(e: Entitlement, iso: string | null): string {
+  if (e.state === "admin") return "Vitalício, sem prazo";
   if (!iso) return "Sem data de validade";
   if (e.state === "trial") return `Até ${formatDateTime(iso)}`;
   if (e.state === "expired" || e.state === "trial_expired")
