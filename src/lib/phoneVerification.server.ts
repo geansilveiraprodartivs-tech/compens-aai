@@ -825,14 +825,22 @@ export async function getPhoneStatusForUser(
   override?: Partial<PhoneVerificationDeps> & { entitlement_state?: string | null },
 ): Promise<PhoneStatus> {
   const { entitlement_state: entitlementOverride, ...depsOverride } = override ?? {};
-  const entitlementState =
-    entitlementOverride !== undefined ? entitlementOverride : await defaultEntitlementState(userId);
 
   const deps = await resolveDeps(depsOverride);
-  const state = await deps.loadState(userId);
-  const nowMs = deps.now();
   const required = phoneVerificationRequired(envRecord());
   const configured = deps.config !== null;
+
+  // Só lê o acesso quando o gate realmente pode valer (evita leitura/gravação
+  // extra do entitlement em toda sessão quando o SMS está desligado).
+  const entitlementState =
+    entitlementOverride !== undefined
+      ? entitlementOverride
+      : configured && required
+        ? await defaultEntitlementState(userId)
+        : null;
+
+  const state = await deps.loadState(userId);
+  const nowMs = deps.now();
   const verified = !!state?.verified_at && !!state?.phone;
 
   const pendingDecision = evaluateCheck({ state, phone: state?.phone ?? "", nowMs });
