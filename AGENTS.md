@@ -42,6 +42,21 @@ The authenticated experience uses a responsive shopping-command-center shell: de
 - Testes: `node scripts/signupAlert.test.ts` (mensagens, canais por env, entrega/paralelismo/falhas, idempotência, janela de idade, webhook 401/400/404/200).
 - Limite: sem credencial configurada o alerta fica `no_channel` (log de aviso). O Resend em `onboarding@resend.dev` só entrega para o e-mail dono da conta Resend; para outros remetentes é preciso domínio verificado.
 
+## Confirmação de celular por SMS (Twilio Verify)
+
+- Objetivo: um trial de 48h por celular confirmado. O `roadmap.md` previa SMS; a auditoria mostrou que **nenhum código Twilio existia** (nem no histórico) — esta é a implementação inicial, com o gate **desligado por padrão**.
+- Usa **somente Twilio Verify V2** (`POST /v2/Services/{sid}/Verifications`, `POST .../VerificationCheck`, `GET .../Services/{sid}`). Nada de Programmable Messaging: o código é gerado/validado pela Twilio e **nunca** é criado, guardado ou comparado do nosso lado.
+- Módulo puro `src/lib/phoneVerification.ts`: `parsePhone` (E.164, celular BR = DDD + 9), `maskPhone`, `readPhoneState`, `evaluateSend` (reenvio a cada 60 s, teto de 5/hora por conta), `evaluateCheck` (código vale 10 min, 5 tentativas, bloqueio de 15 min), redutores de estado, `phoneVerificationRequired` / `phoneGateApplies`.
+- Servidor `src/lib/phoneVerification.server.ts` (deps injetáveis, mesmo padrão do alerta de cadastro): `readTwilioConfig`, `mapTwilioError`, `startPhoneVerification`, `checkPhoneVerification`, `getPhoneStatusForUser`, `handleTwilioStatus`. Logs mostram só `kind`/código/mensagem saneada — nunca token, SID inteiro ou telefone completo.
+- Server functions autenticadas `src/lib/phoneVerification.functions.ts` (`getPhoneVerification`, `sendPhoneCode`, `checkPhoneCode`) — o usuário vem do token; nada de credencial no cliente. Data/hora e decisões são do servidor.
+- Estado em `auth.users.app_metadata.compensai_phone` (**chave separada do billing `compensai`**, gravada só com service role, **sem DDL**): `phone`, `verified_at`, `last_sent_at`, `sends[]`, `attempts`, `locked_until`. Escritas com lock por usuário em memória.
+- UI: `src/components/PhoneVerificationCard.tsx` (cartão no Perfil, antes de "Meu plano") + `PhoneVerificationGate` montado em `src/routes/_authenticated/route.tsx` (overlay `z-[110]`). Hook `src/hooks/usePhoneVerification.ts`.
+- **Gate desligado por padrão**: só bloqueia com `PHONE_VERIFICATION_REQUIRED=true` **e** Twilio configurada **e** `entitlement.state === "trial"`. Assinatura paga, admin, pagamento pendente e trial encerrado nunca são bloqueados; falta de credencial ou erro de leitura falha **aberto** (ninguém fica preso por má configuração).
+- Secrets (backend, nunca no frontend/GitHub): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` **ou** `TWILIO_API_KEY` + `TWILIO_API_KEY_SECRET` (par tem prioridade), `TWILIO_VERIFY_SERVICE_SID` (aliases `TWILIO_VERIFY_SERVICE`/`TWILIO_SERVICE_SID`), `PHONE_VERIFICATION_REQUIRED`.
+- Diagnóstico sem enviar SMS: `GET /api/public/twilio-status` mostra **se** cada variável existe/está no formato (nunca o valor); `?live=1` faz `GET` no serviço Verify para confirmar credencial + Service SID. Erros da Twilio mais tratados: 20003 (credencial), 20404 (serviço), 21211/21604/21606/60200 (número), 21614 (fixo), 21608 (número não autorizado na conta trial), 21408 (região), 21610 (bloqueado), 60202/60203/20429 (tentativas/limite).
+- Testes: `node scripts/phoneVerification.test.ts` (62 casos: número/E.164, máscara, envio aceito, cooldown, teto por hora, código errado, bloqueio, expiração, reuso, celular de outra conta, erros mapeados sem vazar segredo, diagnóstico, gate só em trial).
+- Limites: sem DDL não há unicidade atômica de celular entre contas (hoje é deterrente por varredura `listUsers`); a unicidade real exige tabela + índice único (SQL apresentado, aguardando autorização). Envio/entrega real depende de credenciais nas Secrets, número autorizado na conta Twilio e publicação pelo Lovable — até lá o `?live=1` é a única prova de conexão.
+
 ## Pendência
 
 - Guia de build local do APK Android (plugin `BankApps` já no repo) — usuário pediu para deixar para depois.

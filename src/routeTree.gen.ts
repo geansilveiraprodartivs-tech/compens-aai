@@ -22,6 +22,7 @@ import { Route as AuthenticatedPerfilRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedPixRouteImport } from './routes/_authenticated/pix'
 import { Route as ApiPublicCaktoRouteImport } from './routes/api/public/cakto'
 import { Route as ApiPublicSignupAlertRouteImport } from './routes/api/public/signup-alert'
+import { Route as ApiPublicTwilioStatusRouteImport } from './routes/api/public/twilio-status'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -87,6 +88,11 @@ const ApiPublicSignupAlertRoute = ApiPublicSignupAlertRouteImport.update({
   path: '/api/public/signup-alert',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicTwilioStatusRoute = ApiPublicTwilioStatusRouteImport.update({
+  id: '/api/public/twilio-status',
+  path: '/api/public/twilio-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
   '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
+  '/api/public/twilio-status': typeof ApiPublicTwilioStatusRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
   '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
+  '/api/public/twilio-status': typeof ApiPublicTwilioStatusRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/_authenticated/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
   '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
+  '/api/public/twilio-status': typeof ApiPublicTwilioStatusRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -147,6 +156,7 @@ export interface FileRouteTypes {
     | '/pix'
     | '/api/public/cakto'
     | '/api/public/signup-alert'
+    | '/api/public/twilio-status'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -161,6 +171,7 @@ export interface FileRouteTypes {
     | '/pix'
     | '/api/public/cakto'
     | '/api/public/signup-alert'
+    | '/api/public/twilio-status'
   id:
     | '__root__'
     | '/'
@@ -176,6 +187,7 @@ export interface FileRouteTypes {
     | '/_authenticated/pix'
     | '/api/public/cakto'
     | '/api/public/signup-alert'
+    | '/api/public/twilio-status'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -185,6 +197,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiPublicCaktoRoute: typeof ApiPublicCaktoRoute
   ApiPublicSignupAlertRoute: typeof ApiPublicSignupAlertRoute
+  ApiPublicTwilioStatusRoute: typeof ApiPublicTwilioStatusRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -280,6 +293,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSignupAlertRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/twilio-status': {
+      id: '/api/public/twilio-status'
+      path: '/api/public/twilio-status'
+      fullPath: '/api/public/twilio-status'
+      preLoaderRoute: typeof ApiPublicTwilioStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -313,6 +333,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ApiPublicCaktoRoute: ApiPublicCaktoRoute,
   ApiPublicSignupAlertRoute: ApiPublicSignupAlertRoute,
+  ApiPublicTwilioStatusRoute: ApiPublicTwilioStatusRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

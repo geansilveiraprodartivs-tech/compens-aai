@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
+import { PhoneVerificationCard } from "@/components/PhoneVerificationCard";
 import { PremiumCard, PremiumChip } from "@/components/PremiumBadge";
 import { PlanChoices } from "@/components/SubscriptionGate";
 import { useEntitlement } from "@/hooks/useEntitlement";
@@ -114,9 +115,11 @@ function PerfilPage() {
         </Button>
       </section>
 
+      <PhoneVerificationCard />
+
       <section className="glass space-y-3 p-4">
         <div className="flex items-start gap-2">
-          <Crown className="mt-0.5 size-4 text-accent" />
+          <Crown className="mt-0.5 size-4 text-accent" />{" "}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">Meu plano</p>
             <p className="text-xs text-muted-foreground">
