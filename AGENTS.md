@@ -32,6 +32,16 @@ The authenticated experience uses a responsive shopping-command-center shell: de
 - **Dependência de configuração**: sem `CAKTO_WEBHOOK_SECRET` (Lovable Secrets) o webhook responde 401 e nada é liberado. URL a cadastrar no painel Cakto: `https://compens-aai.lovable.app/api/public/cakto` (eventos de compra, reembolso, chargeback e assinatura). O checkout leva `?callback=<token assinado>` para ligar o pagamento ao usuário. Testes do endpoint: `node scripts/caktoWebhook.test.ts`.
 - Limite conhecido: o bloqueio é de UI + server functions. Listas/comparações vão direto ao Supabase com RLS; negar em nível de banco exigiria policy baseada em `auth.jwt()->'app_metadata'->'compensai'` (migração não aplicada de propósito, para não travar contas em produção sem teste). A gravação usa lock em memória por usuário + `rev` com releitura/retry; entre isolamentos diferentes do servidor a garantia é a dedupe, não uma transação real (exigiria RPC/DDL).
 
+## Alerta de novo cadastro (e-mail + WhatsApp)
+
+- Pedido do dono do app: a cada cadastro novo, avisar **simultaneamente** por e-mail (`compens.aai@gmail.com`) e WhatsApp (`+55 51 98583-9571`), com **nome** e **e-mail** da pessoa.
+- Módulo puro `src/lib/signupAlert.ts` (sem imports, testável): `buildSignupAlert` (assunto/texto/HTML/WhatsApp), `signupAlertChannels` (canais a partir do env), `deliverSignupAlert` (`fetch` injetável, e-mail e WhatsApp em paralelo, nunca lança). Destinatários fixos: `SIGNUP_ALERT_EMAIL_TO` / `SIGNUP_ALERT_WHATSAPP_TO`.
+- Provedores: **e-mail** via Resend (`RESEND_API_KEY`, `SIGNUP_ALERT_FROM`); **WhatsApp** via CallMeBot (`CALLMEBOT_API_KEY`, `CALLMEBOT_PHONE`) ou Meta Cloud API (`WHATSAPP_CLOUD_TOKEN` + `WHATSAPP_CLOUD_PHONE_ID`, `WHATSAPP_ALERT_TO`) — Cloud tem prioridade. Canal sem credencial é `skipped`; nada quebra.
+- Servidor `src/lib/signupAlert.server.ts` (lazy import do Supabase, padrão do webhook Cakto): `notifySignupForUser` lê o cadastro no `auth.users` com a service role (nome/e-mail **nunca** vêm do cliente), respeita `SIGNUP_ALERT_MAX_AGE_HOURS` (padrão 168h) e grava `signup_notified_at` no mesmo objeto `compensai` do `app_metadata` (**sem DDL**) só quando algum canal entregou.
+- Entradas: (1) server fn `notifySignup` (`src/lib/signupAlert.functions.ts`) chamada uma vez por sessão pelo `SignupAlertPing` no `AppShell` — cobre cadastro por e-mail, Google e confirmação de e-mail; (2) rota pública `POST /api/public/signup-alert` (`src/routes/api/public/signup-alert.ts`) para Supabase Database Webhook, fail-closed com `SIGNUP_ALERT_SECRET` (`X-Signup-Alert-Secret` ou `Authorization: Bearer`), `GET` responde `{"ok":true,"endpoint":"signup-alert"}`.
+- Testes: `node scripts/signupAlert.test.ts` (mensagens, canais por env, entrega/paralelismo/falhas, idempotência, janela de idade, webhook 401/400/404/200).
+- Limite: sem credencial configurada o alerta fica `no_channel` (log de aviso). O Resend em `onboarding@resend.dev` só entrega para o e-mail dono da conta Resend; para outros remetentes é preciso domínio verificado.
+
 ## Pendência
 
 - Guia de build local do APK Android (plugin `BankApps` já no repo) — usuário pediu para deixar para depois.

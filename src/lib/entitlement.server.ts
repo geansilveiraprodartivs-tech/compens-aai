@@ -62,7 +62,9 @@ const RESULTS: EventLogResult[] = [
 type AdminUser = {
   id: string;
   email?: string | null;
+  created_at?: string | null;
   app_metadata?: Record<string, unknown> | null;
+  user_metadata?: Record<string, unknown> | null;
 };
 
 function str(value: unknown): string | null {
@@ -112,6 +114,10 @@ function readBilling(appMetadata: Record<string, unknown> | null | undefined): S
 
   if (typeof value["trial_started_at"] === "string") {
     billing.trial_started_at = value["trial_started_at"];
+  }
+
+  if (typeof value["signup_notified_at"] === "string") {
+    billing.signup_notified_at = value["signup_notified_at"];
   }
 
   const sub = value["subscription"];
@@ -305,6 +311,95 @@ export async function getEntitlementForUser(userId: string): Promise<Entitlement
 
   const entitlement = computeEntitlement(billing, now);
   return isAdminEmail(user.email) ? grantAdminAccess(entitlement) : entitlement;
+}
+
+/* ------------------------------------------------- alerta de novo cadastro */
+
+export type SignupAlertTarget = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  created_at: string | null;
+  /** Como entrou: `google`, `email`, ... */
+  origin: string | null;
+  /** Já recebeu alerta? (`signup_notified_at`) */
+  already_notified: boolean;
+};
+
+function metadataText(
+  meta: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string | null {
+  if (!meta) return null;
+  for (const key of keys) {
+    const value = meta[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return null;
+}
+
+function signupName(user: AdminUser): string | null {
+  const meta = user.user_metadata;
+  const name = metadataText(meta, ["display_name", "full_name", "name", "given_name"]);
+  if (name) return name;
+  // Sem nome no perfil, o começo do e-mail já ajuda a identificar a pessoa.
+  const email = (user.email ?? "").trim();
+  if (!email) return null;
+  const at = email.indexOf("@");
+  return at > 0 ? email.slice(0, at) : email;
+}
+
+function signupOrigin(user: AdminUser): string | null {
+  const meta = user.app_metadata;
+  const provider = metadataText(meta, ["provider"]);
+  if (provider) return provider;
+  const providers = meta?.["providers"];
+  if (Array.isArray(providers)) {
+    const first = providers.find((v): v is string => typeof v === "string" && v.trim() !== "");
+    if (first) return first;
+  }
+  return null;
+}
+
+/**
+ * Dados do cadastro para o alerta — lidos do banco com a service role. Se a
+ * conta não existir mais, devolve `null` (nada é enviado).
+ */
+export async function getSignupAlertTarget(userId: string): Promise<SignupAlertTarget | null> {
+  let user: AdminUser;
+  try {
+    user = await fetchUser(userId);
+  } catch {
+    return null;
+  }
+  const billing = readBilling(user.app_metadata);
+  return {
+    id: user.id,
+    name: signupName(user),
+    email: str(user.email),
+    created_at: str(user.created_at),
+    origin: signupOrigin(user),
+    already_notified:
+      typeof billing.signup_notified_at === "string" && billing.signup_notified_at !== "",
+  };
+}
+
+/**
+ * Grava `signup_notified_at` (idempotência do alerta). Usa o MESMO lock/`rev`
+ * da assinatura, para não sobrescrever um evento da Cakto gravado no mesmo
+ * instante; se já estiver marcado, não faz nada.
+ */
+export async function markSignupNotified(userId: string): Promise<void> {
+  await withUserLock(userId, async () => {
+    const user = await fetchUser(userId);
+    const billing = readBilling(user.app_metadata);
+    if (billing.signup_notified_at) return;
+    await writeBilling(userId, user.app_metadata ?? {}, {
+      ...billing,
+      signup_notified_at: new Date().toISOString(),
+      rev: (billing.rev ?? 0) + 1,
+    });
+  });
 }
 
 /** Usado pelas server functions premium: bloqueia quando não há acesso. */

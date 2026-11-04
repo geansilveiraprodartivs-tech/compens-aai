@@ -126,6 +126,11 @@ export type EventLogEntry = {
 
 export type StoredBilling = {
   trial_started_at?: string | null;
+  /**
+   * Quando o alerta de novo cadastro foi entregue ao dono do app. Serve só de
+   * idempotência (o alerta sai uma vez por conta), no mesmo objeto, sem DDL.
+   */
+  signup_notified_at?: string | null;
   subscription?: StoredSubscription | null;
   /** Últimos eventos da Cakto já processados (idempotência). */
   processed_events?: string[];

@@ -3,6 +3,7 @@ import { Home, ShoppingCart, Scale, PiggyBank, User, MapPin, QrCode, Flame } fro
 import type { ReactNode } from "react";
 import { Brand } from "@/components/Brand";
 import { PremiumChip } from "@/components/PremiumBadge";
+import { SignupAlertPing } from "@/components/SignupAlertPing";
 import { TrialBanner } from "@/components/SubscriptionGate";
 import { useProfile } from "@/hooks/useProfile";
 import { useEntitlement } from "@/hooks/useEntitlement";
@@ -24,6 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen pb-24 md:pb-0">
+      <SignupAlertPing />
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 px-4 py-3 backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-2">

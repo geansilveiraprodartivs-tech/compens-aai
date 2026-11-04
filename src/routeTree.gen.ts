@@ -21,6 +21,7 @@ import { Route as AuthenticatedListaRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedPerfilRouteImport } from './routes/_authenticated/perfil'
 import { Route as AuthenticatedPixRouteImport } from './routes/_authenticated/pix'
 import { Route as ApiPublicCaktoRouteImport } from './routes/api/public/cakto'
+import { Route as ApiPublicSignupAlertRouteImport } from './routes/api/public/signup-alert'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -81,6 +82,11 @@ const ApiPublicCaktoRoute = ApiPublicCaktoRouteImport.update({
   path: '/api/public/cakto',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSignupAlertRoute = ApiPublicSignupAlertRouteImport.update({
+  id: '/api/public/signup-alert',
+  path: '/api/public/signup-alert',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -94,6 +100,7 @@ export interface FileRoutesByFullPath {
   '/perfil': typeof AuthenticatedPerfilRoute
   '/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
+  '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByTo {
   '/perfil': typeof AuthenticatedPerfilRoute
   '/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
+  '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -122,6 +130,7 @@ export interface FileRoutesById {
   '/_authenticated/perfil': typeof AuthenticatedPerfilRoute
   '/_authenticated/pix': typeof AuthenticatedPixRoute
   '/api/public/cakto': typeof ApiPublicCaktoRoute
+  '/api/public/signup-alert': typeof ApiPublicSignupAlertRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -137,6 +146,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/pix'
     | '/api/public/cakto'
+    | '/api/public/signup-alert'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -150,6 +160,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/pix'
     | '/api/public/cakto'
+    | '/api/public/signup-alert'
   id:
     | '__root__'
     | '/'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/_authenticated/perfil'
     | '/_authenticated/pix'
     | '/api/public/cakto'
+    | '/api/public/signup-alert'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -172,6 +184,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiPublicCaktoRoute: typeof ApiPublicCaktoRoute
+  ApiPublicSignupAlertRoute: typeof ApiPublicSignupAlertRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicCaktoRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/signup-alert': {
+      id: '/api/public/signup-alert'
+      path: '/api/public/signup-alert'
+      fullPath: '/api/public/signup-alert'
+      preLoaderRoute: typeof ApiPublicSignupAlertRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -292,6 +312,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   ApiPublicCaktoRoute: ApiPublicCaktoRoute,
+  ApiPublicSignupAlertRoute: ApiPublicSignupAlertRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
