@@ -1,3 +1,4 @@
 # Roadmap
 
-- [ ] Enforce one 48-hour trial per verified mobile number across email accounts. Blocked: the Twilio SMS connection was declined; no provider is connected. Do not enable a verification gate until real SMS delivery and verification can be tested. Preserve paid access and existing trial expiry times.
+- [ ] Implement atomic one-trial-per-verified-mobile eligibility and SMS confirmation with Twilio Verify. Preserve paid access and existing trial expiry times.
+- [ ] Test real SMS delivery and confirmation, then enable the mandatory verification gate. Activation waits for the owner's SMS code; never invent verification.
