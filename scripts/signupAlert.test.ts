@@ -418,10 +418,64 @@ function post(body: unknown, headers: Record<string, string>): Request {
   });
 }
 
-test("webhook: GET de verificação responde ok", async () => {
-  const response = handleSignupAlertInfo();
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, endpoint: "signup-alert" });
+const ENV_KEYS = [
+  "RESEND_API_KEY",
+  "CALLMEBOT_API_KEY",
+  "SIGNUP_ALERT_SECRET",
+  "WHATSAPP_CLOUD_TOKEN",
+  "WHATSAPP_CLOUD_PHONE_ID",
+] as const;
+
+function withEnv(
+  values: Partial<Record<(typeof ENV_KEYS)[number], string>>,
+  fn: () => void | Promise<void>,
+): Promise<void> {
+  const saved = new Map<string, string | undefined>();
+  for (const key of ENV_KEYS) {
+    saved.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(values)) process.env[key] = value;
+  return (async () => {
+    try {
+      await fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        const previous = saved.get(key);
+        if (previous === undefined) delete process.env[key];
+        else process.env[key] = previous;
+      }
+    }
+  })();
+}
+
+test("webhook: GET de verificação responde ok e o status dos canais", async () => {
+  await withEnv({}, async () => {
+    const json = await handleSignupAlertInfo().json();
+    assert.equal(json.ok, true);
+    assert.equal(json.endpoint, "signup-alert");
+    assert.deepEqual(json.channels, { email: false, whatsapp: false });
+    assert.equal(json.webhook_protected, false);
+    assert.equal(json.max_age_hours, 168);
+  });
+
+  await withEnv(
+    {
+      RESEND_API_KEY: "re_chave_secreta",
+      CALLMEBOT_API_KEY: "bot_chave_secreta",
+      SIGNUP_ALERT_SECRET: "segredo-do-webhook",
+    },
+    async () => {
+      const json = await handleSignupAlertInfo().json();
+      assert.deepEqual(json.channels, { email: "resend", whatsapp: "callmebot" });
+      assert.equal(json.webhook_protected, true);
+      // O diagnóstico nunca expõe as credenciais.
+      const raw = JSON.stringify(json);
+      assert.equal(raw.includes("re_chave_secreta"), false);
+      assert.equal(raw.includes("bot_chave_secreta"), false);
+      assert.equal(raw.includes("segredo-do-webhook"), false);
+    },
+  );
 });
 
 test("webhook: segredo é obrigatório (fail closed)", async () => {

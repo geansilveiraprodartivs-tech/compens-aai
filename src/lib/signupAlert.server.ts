@@ -211,9 +211,28 @@ export async function notifySignupForUser(
 
 /* ---------------------------------------------------------------- webhook */
 
-/** GET de verificação: confirma que a rota existe (sem expor configuração). */
+/**
+ * GET de verificação. Além de dizer que a rota existe, informa **se** cada
+ * canal está configurado (apenas o nome do provedor — nunca a chave, telefone
+ * ou e-mail). Serve para o dono conferir os Secrets sem precisar de um
+ * cadastro de teste.
+ */
 export function handleSignupAlertInfo(): Response {
-  return json({ ok: true, endpoint: "signup-alert" });
+  const channels = signupAlertChannels(envRecord());
+  return json({
+    ok: true,
+    endpoint: "signup-alert",
+    channels: {
+      email: channels.resend ? "resend" : false,
+      whatsapp: channels.whatsappCloud
+        ? "whatsapp_cloud"
+        : channels.callMeBot
+          ? "callmebot"
+          : false,
+    },
+    webhook_protected: signupAlertSecret() !== null,
+    max_age_hours: Math.round(signupAlertMaxAgeMs() / (60 * 60 * 1000)),
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
