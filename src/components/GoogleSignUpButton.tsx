@@ -91,8 +91,8 @@ export function GoogleSignUpButton({
       const options = typeof window === "undefined" ? {} : { redirect_uri: window.location.origin };
       const result = await lovable.auth.signInWithOAuth("google", options);
       // Redirecionando para o Google: a página sai daqui e volta com sessão.
-      if (result.redirected) return;
       if (result.error) throw result.error;
+      if (result.redirected) return;
       navigate({ to: "/app", replace: true });
     } catch (err) {
       console.error("[CompensAI] falha no cadastro com Google:", err);
@@ -102,8 +102,7 @@ export function GoogleSignUpButton({
           : "Não foi possível continuar com o Google agora. Tente novamente.",
       );
     } finally {
-      // No app nativo o navegador externo assume; no web só chega aqui com erro.
-      if (isNative) setLoading(false);
+      setLoading(false);
     }
   }
 

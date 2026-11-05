@@ -38,6 +38,8 @@ export const Route = createFileRoute("/auth")({
         content: "Acesse sua conta CompensAI e descubra onde compensa comprar perto de você.",
       },
       { property: "og:title", content: "Entrar — CompensAI" },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
       {
         property: "og:description",
         content: "Acesse sua conta CompensAI e descubra onde compensa comprar.",
@@ -287,11 +289,11 @@ function AuthPage() {
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38Z"
                   />
                 </svg>
-                Criar login com o Google
+                Criar conta com Google
               </Button>
             ) : (
               <GoogleSignUpButton
-                label={mode === "signup" ? "Criar conta com o Google" : "Entrar com o Google"}
+                label="Criar conta com Google"
                 className="w-full"
                 disabled={loading}
               />
