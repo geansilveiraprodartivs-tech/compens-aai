@@ -29,6 +29,48 @@ export type Database = {
         }
         Relationships: []
       }
+      mobile_trial_claims: {
+        Row: {
+          phone_hash: string
+          trial_started_at: string
+          user_id: string
+        }
+        Insert: {
+          phone_hash: string
+          trial_started_at?: string
+          user_id: string
+        }
+        Update: {
+          phone_hash?: string
+          trial_started_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      mobile_verifications: {
+        Row: {
+          expires_at: string
+          phone_hash: string
+          user_id: string
+          verification_sid: string
+          verified_at: string | null
+        }
+        Insert: {
+          expires_at: string
+          phone_hash: string
+          user_id: string
+          verification_sid: string
+          verified_at?: string | null
+        }
+        Update: {
+          expires_at?: string
+          phone_hash?: string
+          user_id?: string
+          verification_sid?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       price_sources: {
         Row: {
           base_url: string | null
@@ -582,7 +624,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_mobile_trial: {
+        Args: {
+          p_legacy_start?: string
+          p_phone_hash: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
