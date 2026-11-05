@@ -1,0 +1,40 @@
+# =============================================================================
+# Normalização de fim de linha
+# -----------------------------------------------------------------------------
+# O repositório guarda sempre LF. No working tree:
+#   - código/config/texto  -> LF
+#   - scripts nativos do Windows (.bat/.cmd/.ps1) -> CRLF
+# Isso evita que o `core.autocrlf` da máquina mude o resultado do Prettier
+# (regra `Delete ␍`) sem qualquer alteração real de código.
+# =============================================================================
+
+* text=auto eol=lf
+
+# Scripts que dependem/permitem CRLF no working tree
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binários: nunca normalizar
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.pdf    binary
+*.zip    binary
+*.jar    binary
+*.keystore binary
+*.jks    binary
+*.so     binary
+*.apk    binary
+*.aab    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.eot    binary
+*.mp3    binary
+*.wav    binary
+*.mp4    binary

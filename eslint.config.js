@@ -6,7 +6,21 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi"] },
+  {
+    ignores: [
+      // Build artifacts do bundle web
+      "dist",
+      ".output",
+      ".vinxi",
+      ".nitro",
+      ".tanstack",
+      ".wrangler",
+      // Capacitor: cópias geradas do bundle web dentro dos projetos nativos
+      "android/app/build",
+      "android/app/src/main/assets",
+      "ios/App/App/public",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
