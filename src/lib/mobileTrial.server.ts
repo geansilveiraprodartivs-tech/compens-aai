@@ -52,7 +52,7 @@ export async function confirmMobileVerification(userId: string, code: string) {
   if (saveError) throw new Error('Não foi possível confirmar o celular.');
   const { getBillingSnapshot } = await import('./entitlement.server');
   const billing = await getBillingSnapshot(userId);
-  const { data: claim, error: claimError } = await db.rpc('claim_mobile_trial', { p_user_id: userId, p_phone_hash: pending.phone_hash, p_legacy_start: billing.trial_started_at ?? undefined });
+  const { data: claim, error: claimError } = await db.rpc('claim_mobile_trial', { p_user_id: userId, p_phone_hash: pending.phone_hash, ...(billing.trial_started_at ? { p_legacy_start: billing.trial_started_at } : {}) });
   if (claimError || !claim || typeof claim !== 'object' || Array.isArray(claim)) throw new Error('Não foi possível iniciar o teste.');
   return { eligible: claim['eligible'] === true };
 }
