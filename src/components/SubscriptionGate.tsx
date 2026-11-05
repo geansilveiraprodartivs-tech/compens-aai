@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Check, Loader2, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { MobileVerification } from './MobileVerification';
 import { useEntitlement, useRefreshEntitlement, useSubscribe } from "@/hooks/useEntitlement";
 import {
   ANNUAL_MONTHLY_EQUIVALENT_CENTS,
@@ -201,9 +202,10 @@ export function SubscriptionGate() {
           id="subscription-gate-title"
           className="mt-2 font-display text-xl font-extrabold leading-tight sm:text-2xl"
         >
-          {gateTitle(data.state)}
+          {data.verification_required ? 'Confirme seu celular' : data.trial_duplicate ? 'Seu celular já utilizou o teste gratuito' : gateTitle(data.state)}
         </h2>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{GATE_SUBTITLE}</p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{data.verification_required ? 'Confirme o código recebido por SMS para liberar seu teste gratuito.' : GATE_SUBTITLE}</p>
+        {data.verification_required && <MobileVerification />}
 
         {note && (
           <p className="mt-3 rounded-xl border border-border bg-secondary/40 px-3 py-2 text-[11.5px] leading-snug text-muted-foreground">

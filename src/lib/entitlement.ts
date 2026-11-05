@@ -169,6 +169,8 @@ export type Entitlement = {
   payment_pending: boolean;
   /** Conta administradora do app (acesso premium vitalício, decidido no servidor). */
   admin?: boolean;
+  verification_required?: boolean;
+  trial_duplicate?: boolean;
   server_now: string;
 };
 

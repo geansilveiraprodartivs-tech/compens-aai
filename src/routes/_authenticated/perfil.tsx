@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
+import { MobileVerification } from '@/components/MobileVerification';
 import { PremiumCard, PremiumChip } from "@/components/PremiumBadge";
 import { PlanChoices } from "@/components/SubscriptionGate";
 import { useEntitlement } from "@/hooks/useEntitlement";
@@ -29,6 +30,8 @@ export const Route = createFileRoute("/_authenticated/perfil")({
     meta: [
       { title: "Perfil — CompensAI" },
       { name: "description", content: "Ajuste sua localização, orçamento e conta no CompensAI." },
+      { property: 'og:type', content: 'website' },
+      { name: 'twitter:card', content: 'summary_large_image' },
       { property: "og:title", content: "Perfil — CompensAI" },
       {
         property: "og:description",
@@ -70,6 +73,7 @@ function PerfilPage() {
       </h1>
 
       {entitlement?.admin && <PremiumCard />}
+      <MobileVerification />
 
       <AvatarEditor
         path={profile?.avatar_url ?? null}

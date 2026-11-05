@@ -300,7 +300,8 @@ export async function getEntitlementForUser(userId: string): Promise<Entitlement
   const user = await fetchUser(userId);
   let billing = readBilling(user.app_metadata);
 
-  if (!billing.trial_started_at) {
+  const mobileRequired = process.env['MOBILE_TRIAL_REQUIRED'] === 'true';
+  if (!billing.trial_started_at && !mobileRequired) {
     billing = {
       ...billing,
       trial_started_at: new Date(now).toISOString(),
@@ -310,7 +311,11 @@ export async function getEntitlementForUser(userId: string): Promise<Entitlement
   }
 
   const entitlement = computeEntitlement(billing, now);
-  return isAdminEmail(user.email) ? grantAdminAccess(entitlement) : entitlement;
+  if (isAdminEmail(user.email)) return grantAdminAccess(entitlement);
+  if (!mobileRequired) return entitlement;
+  const { getMobileClaim } = await import('./mobileTrial.server');
+  const { mobileEntitlement } = await import('./mobileTrial');
+  return mobileEntitlement(billing, now, await getMobileClaim(userId));
 }
 
 /* ------------------------------------------------- alerta de novo cadastro */
