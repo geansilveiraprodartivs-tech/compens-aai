@@ -1,7 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/AppShell";
-import { PhoneVerificationGate } from "@/components/PhoneVerificationCard";
 import { SubscriptionGate } from "@/components/SubscriptionGate";
 
 export const Route = createFileRoute("/_authenticated")({
@@ -16,7 +15,6 @@ export const Route = createFileRoute("/_authenticated")({
       <AppShell>
         <Outlet />
       </AppShell>
-      <PhoneVerificationGate />
       <SubscriptionGate />
     </>
   ),
