@@ -12,13 +12,13 @@
  * - `TWILIO_CUSTOM_API_KEY` tem prioridade sobre `TWILIO_API_KEY`: o valor
  *   desta última pode ser uma chave interna do conector Lovable (não é um
  *   API Key SID `SK...`) e, nesse caso, é ignorado sem marcar erro.
- * - `TWILIO_VERIFY_BASE_URL` (opcional) troca a base do Verify: serve para um
- *   host regional da Twilio ou para um relay quando o runtime publicado não
- *   alcança o host padrão. O Basic Auth viaja para esse host, então ele é
- *   validado (https + host puro) antes de qualquer chamada.
- * - O único ponto que faz mais de um GET no Verify é o diagnóstico de hosts
- *   (`?live=1&probe=1`). Ele exige `TWILIO_DIAG_TOKEN` (header `X-Diag-Token`
- *   ou `Authorization: Bearer`) e falha fechado quando o token não existe.
+ * - `TWILIO_VERIFY_BASE_URL` (opcional) só aceita host oficialmente documentado
+ *   como compatível com Verify SMS; hoje a lista tem apenas `verify.twilio.com`.
+ *   Qualquer outro valor é recusado, então o Basic Auth nunca é enviado para
+ *   um host fora dessa lista.
+ * - O diagnóstico de hosts (`?live=1&probe=1`) faz um GET por host aceito e é
+ *   o único ponto que exige `TWILIO_DIAG_TOKEN` (header `X-Diag-Token` ou
+ *   `Authorization: Bearer`); sem token ele falha fechado, sem chamar a Twilio.
  * - O estado por conta fica em `auth.users.app_metadata.compensai_phone`
  *   (chave separada do billing, gravada só com a service role, sem DDL).
  * - Rate limit, tentativas e expiração são controlados aqui, antes e depois da
@@ -66,6 +66,17 @@ const DEFAULT_VERIFY_BASE_URL = "https://verify.twilio.com";
 /** Tamanho mínimo do token de diagnóstico; menor que isso é tratado como ausente. */
 const DIAG_TOKEN_MIN_LENGTH = 16;
 
+/**
+ * Hosts aceitos para o Verify.
+ *
+ * Lista fechada e deliberadamente mínima: só entra host que a Twilio documenta
+ * como compatível com Verify SMS **e** com as credenciais deste app. Os hosts
+ * regionais (`us1`, `ie1`, `au1`) não atendem a este fluxo (o regional em IE1 é
+ * específico de SNA e exige credencial própria), então não entram aqui — é
+ * esta lista que decide para onde o Basic Auth pode viajar.
+ */
+export const VERIFY_BASE_HOSTS = ["verify.twilio.com"] as const;
+
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -105,16 +116,13 @@ const ACCOUNT_SID_RE = /^AC[0-9a-fA-F]{32}$/;
 const SERVICE_SID_RE = /^VA[0-9a-fA-F]{32}$/;
 const API_KEY_RE = /^SK[0-9a-fA-F]{32}$/;
 
-const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
-
 /**
  * Valida a base do Verify vinda do ambiente.
  *
- * Aceita apenas `https` + nome de host puro: sem caminho, porta exótica,
- * query, fragmento ou usuário/senha embutidos, e sem IP literal. Como a
- * credencial viaja no Basic Auth para essa URL, um valor malformado nunca
- * pode redirecionar o segredo para outro destino.
+ * Aceita apenas `https`, host presente em `VERIFY_BASE_HOSTS` e sem caminho,
+ * porta, query, fragmento ou usuário/senha embutidos. Como a credencial viaja
+ * no Basic Auth para essa URL, um valor fora da lista é recusado antes de
+ * qualquer chamada — nunca há envio de credencial para host não autorizado.
  */
 export function parseVerifyBaseUrl(value: string): { url: string | null; invalid: boolean } {
   const raw = str(value);
@@ -128,16 +136,11 @@ export function parseVerifyBaseUrl(value: string): { url: string | null; invalid
   }
 
   const host = parsed.hostname.toLowerCase();
-  const labels = host.split(".");
-  const hostOk =
-    host.length <= 253 &&
-    labels.length >= 2 &&
-    labels.every((label) => label.length <= 63 && HOST_LABEL_RE.test(label)) &&
-    !IPV4_RE.test(host);
+  const allowed = (VERIFY_BASE_HOSTS as readonly string[]).includes(host);
 
   const clean =
     parsed.protocol === "https:" &&
-    hostOk &&
+    allowed &&
     (parsed.pathname === "" || parsed.pathname === "/") &&
     parsed.search === "" &&
     parsed.hash === "" &&
@@ -429,30 +432,19 @@ export async function checkVerifyService(
 }
 
 /**
- * Hosts candidatos do Verify.
+ * GET de validação (sem SMS, sem custo) nos hosts aceitos, em paralelo.
  *
- * Lista fixa e fechada: nenhum host vem da requisição, então o probe não vira
- * proxy aberto nem vetor de SSRF. Serve para separar "bloqueio por hostname"
- * de "bloqueio amplo de saída" no runtime publicado.
- */
-export const VERIFY_PROBE_HOSTS = [
-  "verify.twilio.com",
-  "verify.us1.twilio.com",
-  "verify.ie1.twilio.com",
-  "verify.au1.twilio.com",
-] as const;
-
-/**
- * GET de validação (sem SMS, sem custo) em cada host candidato, em paralelo.
- *
- * Cada host recebe o mesmo Basic Auth da configuração; nada é gravado.
+ * Percorre exatamente `VERIFY_BASE_HOSTS`, a mesma lista que valida
+ * `TWILIO_VERIFY_BASE_URL`: o probe não pode alcançar host fora dela. Hoje é um
+ * único GET; a estrutura fica pronta para o dia em que houver outro host
+ * documentado para este fluxo.
  */
 export async function probeVerifyHosts(
   config: TwilioConfig,
   fetchImpl: FetchImpl,
 ): Promise<Array<Record<string, unknown>>> {
   return Promise.all(
-    VERIFY_PROBE_HOSTS.map(async (host) => {
+    VERIFY_BASE_HOSTS.map(async (host) => {
       const started = Date.now();
       const result = await checkVerifyService(
         { ...config, verifyBaseUrl: `https://${host}` },
@@ -1085,9 +1077,10 @@ function providedDiagToken(request: Request): string {
  * valor. Com `?live=1` faz um GET no serviço Verify (sem enviar SMS, sem custo)
  * para confirmar credencial + Service SID de verdade.
  *
- * `?probe=1` (ou `?live=1&probe=1`) testa os hosts candidatos do Verify e é a
- * única parte que exige token (`TWILIO_DIAG_TOKEN`). Sem token, ou com token
- * errado, responde 403 e **não** chama a Twilio.
+ * `?probe=1` (ou `?live=1&probe=1`) testa o(s) host(s) aceito(s) do Verify
+ * (`VERIFY_BASE_HOSTS`) e é a única parte que exige token
+ * (`TWILIO_DIAG_TOKEN`). Sem token, ou com token errado, responde 403 e **não**
+ * chama a Twilio.
  */
 export async function handleTwilioStatus(
   request: Request,

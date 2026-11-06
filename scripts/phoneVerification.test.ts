@@ -39,6 +39,7 @@ import {
   handleTwilioStatus,
   mapTwilioError,
   parseVerifyBaseUrl,
+  probeVerifyHosts,
   readTwilioConfig,
   startPhoneVerification,
   twilioConfigStatus,
@@ -703,16 +704,31 @@ test("config: diagnóstico diz SE está configurado, nunca o valor", () => {
   assert.ok(!dump.includes(SERVICE_SID));
 });
 
-test("config: TWILIO_VERIFY_BASE_URL válido troca só a base, não a credencial", () => {
+test("config: TWILIO_VERIFY_BASE_URL aceita só o host documentado, sem tocar na credencial", () => {
   const read = readTwilioConfig({
     ...BASE_ENV,
-    TWILIO_VERIFY_BASE_URL: "https://verify.us1.twilio.com/",
+    TWILIO_VERIFY_BASE_URL: "https://verify.twilio.com/",
   });
   assert.deepEqual(read.invalid, []);
-  assert.equal(read.config?.verifyBaseUrl, "https://verify.us1.twilio.com");
+  assert.equal(read.config?.verifyBaseUrl, "https://verify.twilio.com");
   assert.equal(read.config?.username, API_KEY);
   assert.equal(read.config?.password, API_KEY_SECRET);
   assert.equal(read.config?.authMode, "api_key");
+});
+
+test("config: host regional não é aceito (não é documentado para Verify SMS)", () => {
+  for (const host of ["verify.us1.twilio.com", "verify.ie1.twilio.com", "verify.au1.twilio.com"]) {
+    const parsed = parseVerifyBaseUrl(`https://${host}`);
+    assert.deepEqual(parsed, { url: null, invalid: true }, `aceitou ${host}`);
+
+    const read = readTwilioConfig({
+      ...BASE_ENV,
+      TWILIO_VERIFY_BASE_URL: `https://${host}`,
+    });
+    assert.equal(read.config, null, `config aceitou ${host}`);
+    assert.ok(read.invalid.includes("TWILIO_VERIFY_BASE_URL"));
+    assert.ok(!JSON.stringify(read).includes(host));
+  }
 });
 
 test("config: sem TWILIO_VERIFY_BASE_URL a config fica sem base (host padrão)", () => {
@@ -720,6 +736,7 @@ test("config: sem TWILIO_VERIFY_BASE_URL a config fica sem base (host padrão)",
   assert.ok(read.config);
   assert.equal(read.config?.verifyBaseUrl, undefined);
   assert.deepEqual(parseVerifyBaseUrl(""), { url: null, invalid: false });
+  assert.deepEqual(parseVerifyBaseUrl("verify.twilio.com"), { url: null, invalid: true });
 });
 
 test("config: base do Verify inválida recusa tudo sem ecoar o valor", () => {
@@ -727,7 +744,10 @@ test("config: base do Verify inválida recusa tudo sem ecoar o valor", () => {
     "http://verify.twilio.com",
     "https://verify.twilio.com/v2",
     "https://verify.twilio.com?x=1",
+    "https://verify.twilio.com#x",
+    "https://verify.twilio.com:8443",
     "https://user:pass@verify.twilio.com",
+    "https://verify.twilio.com.evil.test",
     "https://127.0.0.1",
     "https://localhost",
     "nao-e-url",
@@ -743,11 +763,11 @@ test("config: base do Verify inválida recusa tudo sem ecoar o valor", () => {
 test("config: status público não expõe a base do Verify", () => {
   const status = twilioConfigStatus({
     ...BASE_ENV,
-    TWILIO_VERIFY_BASE_URL: "https://verify.ie1.twilio.com",
+    TWILIO_VERIFY_BASE_URL: "https://verify.twilio.com",
   });
   assert.equal(status["configured"], true);
   assert.ok(!("verify_base_url" in status));
-  assert.ok(!JSON.stringify(status).includes("ie1.twilio.com"));
+  assert.ok(!JSON.stringify(status).includes("https://"));
 });
 
 /* ------------------------------------------------- 8. erros da Twilio */
@@ -1296,15 +1316,29 @@ test("rede: sem base configurada a URL continua sendo o host padrão do Verify",
   assert.equal(fake.calls[0]?.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}`);
 });
 
-test("rede: base configurada é usada na URL, com o mesmo Basic Auth", async () => {
+test("rede: base configurada (host documentado) mantém URL e o mesmo Basic Auth", async () => {
   const fake = fakeFetch(() => ({ status: 200, body: { sid: SERVICE_SID } }));
   const result = await checkVerifyService(
-    { ...CONFIG, verifyBaseUrl: "https://verify.ie1.twilio.com" },
+    { ...CONFIG, verifyBaseUrl: "https://verify.twilio.com" },
     fake.impl,
   );
   assert.equal(result.ok, true);
-  assert.equal(fake.calls[0]?.url, `https://verify.ie1.twilio.com/v2/Services/${SERVICE_SID}`);
+  assert.equal(fake.calls[0]?.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}`);
   assert.equal(fake.calls[0]?.authorization, `Basic ${btoa(`${API_KEY}:${API_KEY_SECRET}`)}`);
+});
+
+test("rede: só o host documentado recebe o Basic Auth, mesmo com host extra no config", async () => {
+  // Um `verifyBaseUrl` que não passou por `parseVerifyBaseUrl` é usado como está;
+  // por isso a validação de env é a barreira — aqui provamos que a lista de
+  // hosts aceitos é a única fonte de verdade para o probe.
+  const fake = fakeFetch(() => ({ status: 401, body: {} }));
+  const hosts = await probeVerifyHosts(CONFIG, fake.impl);
+  assert.deepEqual(
+    hosts.map((entry) => entry["host"]),
+    ["verify.twilio.com"],
+  );
+  assert.equal(fake.calls.length, 1);
+  assert.equal(fake.calls[0]?.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}`);
 });
 
 test("rede: exceção de transporte vira categoria fechada", () => {
@@ -1440,7 +1474,7 @@ test("probe: token errado responde 403 sem chamar a Twilio", async () => {
   }
 });
 
-test("probe: token válido consulta só os hosts da lista fixa", async () => {
+test("probe: token válido consulta só o host documentado", async () => {
   restoreEnv();
   for (const key of ENV_KEYS) delete process.env[key];
   process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
@@ -1462,23 +1496,18 @@ test("probe: token válido consulta só os hosts da lista fixa", async () => {
     assert.equal(probe["checked"], true);
     assert.equal(probe["base_url"], "https://verify.twilio.com");
     const hosts = probe["hosts"] as Array<Record<string, unknown>>;
-    assert.equal(hosts.length, 4);
+    assert.equal(hosts.length, 1);
     assert.deepEqual(
       hosts.map((entry) => entry["host"]),
-      [
-        "verify.twilio.com",
-        "verify.us1.twilio.com",
-        "verify.ie1.twilio.com",
-        "verify.au1.twilio.com",
-      ],
+      ["verify.twilio.com"],
     );
     for (const entry of hosts) {
       assert.equal(entry["status"], 401);
       assert.equal(entry["ok"], false);
       assert.equal(entry["error_kind"], "auth_failed");
     }
-    // 4 do probe + 1 do ?live=1
-    assert.equal(fake.calls.length, 5);
+    // 1 do probe + 1 do ?live=1
+    assert.equal(fake.calls.length, 2);
     for (const call of fake.calls) {
       assert.ok(call.url.endsWith(`/v2/Services/${SERVICE_SID}`), call.url);
       assert.equal(call.authorization, `Basic ${btoa(`${CUSTOM_API_KEY}:${API_KEY_SECRET}`)}`);

@@ -9,9 +9,11 @@ import { handleTwilioStatus } from "@/lib/phoneVerification.server";
  * Verify (não envia SMS, não gera custo) para confirmar credencial + Service
  * SID de verdade.
  *
- * `?probe=1` testa os hosts candidatos do Verify e exige o token
- * `TWILIO_DIAG_TOKEN` no header `X-Diag-Token` (ou `Authorization: Bearer`).
- * Sem token configurado, ou com token errado, responde 403 sem chamar a Twilio.
+ * `?probe=1` testa o host aceito do Verify e exige o token `TWILIO_DIAG_TOKEN`
+ * no header `X-Diag-Token` (ou `Authorization: Bearer`). Sem token
+ * configurado, ou com token errado, responde 403 sem chamar a Twilio. Hoje a
+ * lista aceita apenas `verify.twilio.com` — host regional só entra se a Twilio
+ * documentar compatibilidade com este fluxo (Verify SMS).
  *
  * Não há POST: este endpoint não envia SMS nem altera conta.
  */
