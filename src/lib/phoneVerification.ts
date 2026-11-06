@@ -481,6 +481,12 @@ export type PhoneProviderError = {
   code: number | null;
   /** Mensagem do provedor já saneada (sem telefone e sem credencial). */
   message: string;
+  /**
+   * Categoria técnica da falha de transporte (`dns`, `connection`, `tls`,
+   * `timeout`, `fetch_failed:<Name>`). Serve só para diagnóstico: nunca
+   * contém URL, telefone, credencial nem a mensagem original da exceção.
+   */
+  detail?: string;
 };
 
 export type SendCodeReason =

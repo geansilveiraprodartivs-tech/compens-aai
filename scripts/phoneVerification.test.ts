@@ -33,9 +33,12 @@ import {
 } from "../src/lib/phoneVerification.ts";
 import {
   checkPhoneVerification,
+  checkVerifyService,
+  classifyFetchError,
   getPhoneStatusForUser,
   handleTwilioStatus,
   mapTwilioError,
+  parseVerifyBaseUrl,
   readTwilioConfig,
   startPhoneVerification,
   twilioConfigStatus,
@@ -64,6 +67,8 @@ const CUSTOM_API_KEY = `SK${"d".repeat(32)}`;
 /** Valor fictício, só para provar que nunca vaza. */
 const API_KEY_SECRET = "segredo-ficticio-da-api-key";
 const AUTH_TOKEN = "token-ficticio-da-conta";
+/** Token fictício do probe de hosts (`TWILIO_DIAG_TOKEN`), com tamanho válido. */
+const DIAG_TOKEN = "token-ficticio-do-diagnostico-1234";
 /** Valor típico injetado pelo conector Lovable: não é um API Key SID SK... */
 const CONNECTOR_KEY = "chave-interna-do-conector-lovable";
 
@@ -88,6 +93,8 @@ const ENV_KEYS = [
   "TWILIO_CUSTOM_API_KEY",
   "TWILIO_VERIFY_SERVICE",
   "TWILIO_SERVICE_SID",
+  "TWILIO_VERIFY_BASE_URL",
+  "TWILIO_DIAG_TOKEN",
   "PHONE_VERIFICATION_REQUIRED",
 ];
 
@@ -696,6 +703,53 @@ test("config: diagnóstico diz SE está configurado, nunca o valor", () => {
   assert.ok(!dump.includes(SERVICE_SID));
 });
 
+test("config: TWILIO_VERIFY_BASE_URL válido troca só a base, não a credencial", () => {
+  const read = readTwilioConfig({
+    ...BASE_ENV,
+    TWILIO_VERIFY_BASE_URL: "https://verify.us1.twilio.com/",
+  });
+  assert.deepEqual(read.invalid, []);
+  assert.equal(read.config?.verifyBaseUrl, "https://verify.us1.twilio.com");
+  assert.equal(read.config?.username, API_KEY);
+  assert.equal(read.config?.password, API_KEY_SECRET);
+  assert.equal(read.config?.authMode, "api_key");
+});
+
+test("config: sem TWILIO_VERIFY_BASE_URL a config fica sem base (host padrão)", () => {
+  const read = readTwilioConfig(BASE_ENV);
+  assert.ok(read.config);
+  assert.equal(read.config?.verifyBaseUrl, undefined);
+  assert.deepEqual(parseVerifyBaseUrl(""), { url: null, invalid: false });
+});
+
+test("config: base do Verify inválida recusa tudo sem ecoar o valor", () => {
+  const ruins = [
+    "http://verify.twilio.com",
+    "https://verify.twilio.com/v2",
+    "https://verify.twilio.com?x=1",
+    "https://user:pass@verify.twilio.com",
+    "https://127.0.0.1",
+    "https://localhost",
+    "nao-e-url",
+  ];
+  for (const value of ruins) {
+    const read = readTwilioConfig({ ...BASE_ENV, TWILIO_VERIFY_BASE_URL: value });
+    assert.equal(read.config, null, `aceitou "${value}"`);
+    assert.ok(read.invalid.includes("TWILIO_VERIFY_BASE_URL"), `não marcou "${value}"`);
+    assert.ok(!JSON.stringify(read).includes(value), `vazou "${value}"`);
+  }
+});
+
+test("config: status público não expõe a base do Verify", () => {
+  const status = twilioConfigStatus({
+    ...BASE_ENV,
+    TWILIO_VERIFY_BASE_URL: "https://verify.ie1.twilio.com",
+  });
+  assert.equal(status["configured"], true);
+  assert.ok(!("verify_base_url" in status));
+  assert.ok(!JSON.stringify(status).includes("ie1.twilio.com"));
+});
+
 /* ------------------------------------------------- 8. erros da Twilio */
 
 test("erros: códigos da Twilio viram motivos tratáveis", () => {
@@ -1228,6 +1282,235 @@ test("diagnóstico: ?live=1 com credencial errada explica o erro sem vazar valor
     assert.equal(live["error_kind"], "auth_failed");
     assert.equal(live["error_code"], 20003);
     assert.ok(!JSON.stringify(body).includes(AUTH_TOKEN));
+  } finally {
+    restoreEnv();
+  }
+});
+
+/* -------------------------------------------------- 12b. base + transporte */
+
+test("rede: sem base configurada a URL continua sendo o host padrão do Verify", async () => {
+  const fake = fakeFetch(() => ({ status: 200, body: { sid: SERVICE_SID } }));
+  const result = await checkVerifyService(CONFIG, fake.impl);
+  assert.equal(result.ok, true);
+  assert.equal(fake.calls[0]?.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}`);
+});
+
+test("rede: base configurada é usada na URL, com o mesmo Basic Auth", async () => {
+  const fake = fakeFetch(() => ({ status: 200, body: { sid: SERVICE_SID } }));
+  const result = await checkVerifyService(
+    { ...CONFIG, verifyBaseUrl: "https://verify.ie1.twilio.com" },
+    fake.impl,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(fake.calls[0]?.url, `https://verify.ie1.twilio.com/v2/Services/${SERVICE_SID}`);
+  assert.equal(fake.calls[0]?.authorization, `Basic ${btoa(`${API_KEY}:${API_KEY_SECRET}`)}`);
+});
+
+test("rede: exceção de transporte vira categoria fechada", () => {
+  const abort = new Error("aborted");
+  abort.name = "AbortError";
+  const casesTable: Array<[unknown, string]> = [
+    [new TypeError("getaddrinfo ENOTFOUND verify.twilio.com"), "dns"],
+    [new TypeError("Could not resolve host: verify.twilio.com"), "dns"],
+    [abort, "timeout"],
+    [new TypeError("connect ECONNREFUSED 10.0.0.1:443"), "connection"],
+    [new Error("certificate has expired"), "tls"],
+    [new TypeError("fetch failed"), "fetch_failed:TypeError"],
+    [undefined, "unknown"],
+  ];
+  for (const [error, expected] of casesTable) {
+    assert.equal(classifyFetchError(error), expected);
+  }
+});
+
+test("rede: falha de transporte no ?live=1 explica a categoria sem vazar nada", async () => {
+  const consoleCapture = captureConsole();
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_API_KEY"] = API_KEY;
+  process.env["TWILIO_API_KEY_SECRET"] = API_KEY_SECRET;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  try {
+    const impl = () => Promise.reject(new TypeError("getaddrinfo ENOTFOUND verify.twilio.com"));
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?live=1"),
+      { fetchImpl: impl },
+    );
+    const body = await readJson(response);
+    const live = objectField(body, "live");
+    assert.equal(live["checked"], true);
+    assert.equal(live["ok"], false);
+    assert.equal(live["error_kind"], "network");
+    assert.equal(live["error_detail"], "dns");
+    const dump = JSON.stringify(body);
+    assert.ok(!dump.includes(API_KEY_SECRET));
+    assert.ok(!dump.includes(API_KEY));
+    assert.ok(!dump.includes("getaddrinfo"));
+    const logs = consoleCapture.messages.join(" | ");
+    assert.ok(!logs.includes(API_KEY_SECRET));
+    assert.ok(!logs.includes(SERVICE_SID));
+    assert.ok(logs.includes("dns"));
+  } finally {
+    consoleCapture.restore();
+    restoreEnv();
+  }
+});
+
+/* ------------------------------------------- 12c. probe de hosts (protegido) */
+
+test("probe: sem TWILIO_DIAG_TOKEN falha fechado e não chama a Twilio", async () => {
+  const consoleCapture = captureConsole();
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_AUTH_TOKEN"] = AUTH_TOKEN;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  const fake = fakeFetch();
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?probe=1", {
+        headers: { "x-diag-token": DIAG_TOKEN },
+      }),
+      { fetchImpl: fake.impl },
+    );
+    assert.equal(response.status, 403);
+    const body = await readJson(response);
+    const probe = objectField(body, "probe");
+    assert.equal(body["ok"], false);
+    assert.equal(probe["checked"], false);
+    assert.equal(probe["reason"], "disabled");
+    assert.equal(fake.calls.length, 0);
+  } finally {
+    consoleCapture.restore();
+    restoreEnv();
+  }
+});
+
+test("probe: token curto é tratado como ausente", async () => {
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_AUTH_TOKEN"] = AUTH_TOKEN;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  process.env["TWILIO_DIAG_TOKEN"] = "curto";
+  const fake = fakeFetch();
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?probe=1", {
+        headers: { "x-diag-token": "curto" },
+      }),
+      { fetchImpl: fake.impl },
+    );
+    assert.equal(response.status, 403);
+    const probe = objectField(await readJson(response), "probe");
+    assert.equal(probe["reason"], "disabled");
+    assert.equal(fake.calls.length, 0);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("probe: token errado responde 403 sem chamar a Twilio", async () => {
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_AUTH_TOKEN"] = AUTH_TOKEN;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  process.env["TWILIO_DIAG_TOKEN"] = DIAG_TOKEN;
+  const fake = fakeFetch();
+  try {
+    for (const headers of [
+      { "x-diag-token": `${DIAG_TOKEN}-errado` },
+      { authorization: "Bearer outro-token-qualquer-123" },
+      {},
+    ]) {
+      const response = await handleTwilioStatus(
+        new Request("https://app.test/api/public/twilio-status?probe=1", { headers }),
+        { fetchImpl: fake.impl },
+      );
+      assert.equal(response.status, 403);
+      const probe = objectField(await readJson(response), "probe");
+      assert.equal(probe["reason"], "unauthorized");
+    }
+    assert.equal(fake.calls.length, 0);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("probe: token válido consulta só os hosts da lista fixa", async () => {
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_CUSTOM_API_KEY"] = CUSTOM_API_KEY;
+  process.env["TWILIO_API_KEY_SECRET"] = API_KEY_SECRET;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  process.env["TWILIO_DIAG_TOKEN"] = DIAG_TOKEN;
+  const fake = fakeFetch(() => ({ status: 401, body: {} }));
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?live=1&probe=1", {
+        headers: { authorization: `Bearer ${DIAG_TOKEN}` },
+      }),
+      { fetchImpl: fake.impl },
+    );
+    assert.equal(response.status, 200);
+    const body = await readJson(response);
+    const probe = objectField(body, "probe");
+    assert.equal(probe["checked"], true);
+    assert.equal(probe["base_url"], "https://verify.twilio.com");
+    const hosts = probe["hosts"] as Array<Record<string, unknown>>;
+    assert.equal(hosts.length, 4);
+    assert.deepEqual(
+      hosts.map((entry) => entry["host"]),
+      [
+        "verify.twilio.com",
+        "verify.us1.twilio.com",
+        "verify.ie1.twilio.com",
+        "verify.au1.twilio.com",
+      ],
+    );
+    for (const entry of hosts) {
+      assert.equal(entry["status"], 401);
+      assert.equal(entry["ok"], false);
+      assert.equal(entry["error_kind"], "auth_failed");
+    }
+    // 4 do probe + 1 do ?live=1
+    assert.equal(fake.calls.length, 5);
+    for (const call of fake.calls) {
+      assert.ok(call.url.endsWith(`/v2/Services/${SERVICE_SID}`), call.url);
+      assert.equal(call.authorization, `Basic ${btoa(`${CUSTOM_API_KEY}:${API_KEY_SECRET}`)}`);
+    }
+    const dump = JSON.stringify(body);
+    assert.ok(!dump.includes(API_KEY_SECRET));
+    assert.ok(!dump.includes(CUSTOM_API_KEY));
+    assert.ok(!dump.includes(DIAG_TOKEN));
+    // A base do Verify não aparece no bloco público.
+    assert.ok(!("verify_base_url" in objectField(body, "twilio")));
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("probe: sem credencial configurada não faz chamada, mesmo com token", async () => {
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_DIAG_TOKEN"] = DIAG_TOKEN;
+  const fake = fakeFetch();
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?probe=1", {
+        headers: { "x-diag-token": DIAG_TOKEN },
+      }),
+      { fetchImpl: fake.impl },
+    );
+    assert.equal(response.status, 200);
+    const probe = objectField(await readJson(response), "probe");
+    assert.equal(probe["checked"], false);
+    assert.equal(probe["reason"], "not_configured");
+    assert.equal(fake.calls.length, 0);
   } finally {
     restoreEnv();
   }

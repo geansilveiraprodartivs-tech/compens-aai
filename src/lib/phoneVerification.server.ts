@@ -12,6 +12,13 @@
  * - `TWILIO_CUSTOM_API_KEY` tem prioridade sobre `TWILIO_API_KEY`: o valor
  *   desta última pode ser uma chave interna do conector Lovable (não é um
  *   API Key SID `SK...`) e, nesse caso, é ignorado sem marcar erro.
+ * - `TWILIO_VERIFY_BASE_URL` (opcional) troca a base do Verify: serve para um
+ *   host regional da Twilio ou para um relay quando o runtime publicado não
+ *   alcança o host padrão. O Basic Auth viaja para esse host, então ele é
+ *   validado (https + host puro) antes de qualquer chamada.
+ * - O único ponto que faz mais de um GET no Verify é o diagnóstico de hosts
+ *   (`?live=1&probe=1`). Ele exige `TWILIO_DIAG_TOKEN` (header `X-Diag-Token`
+ *   ou `Authorization: Bearer`) e falha fechado quando o token não existe.
  * - O estado por conta fica em `auth.users.app_metadata.compensai_phone`
  *   (chave separada do billing, gravada só com a service role, sem DDL).
  * - Rate limit, tentativas e expiração são controlados aqui, antes e depois da
@@ -55,6 +62,9 @@ type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 
 const MAX_PROVIDER_MESSAGE = 240;
 const TIMEOUT_MS = 10_000;
+const DEFAULT_VERIFY_BASE_URL = "https://verify.twilio.com";
+/** Tamanho mínimo do token de diagnóstico; menor que isso é tratado como ausente. */
+const DIAG_TOKEN_MIN_LENGTH = 16;
 
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -81,11 +91,62 @@ export type TwilioConfig = {
   /** Senha do Basic Auth: API Key Secret ou Auth Token. */
   password: string;
   authMode: "api_key" | "auth_token";
+  /**
+   * Base do Verify. Ausente = `https://verify.twilio.com`.
+   *
+   * Só pode vir de Secret (`TWILIO_VERIFY_BASE_URL`), nunca da requisição. O
+   * Basic Auth é enviado para esse host, então ele passa por
+   * `parseVerifyBaseUrl` antes de ser aceito.
+   */
+  verifyBaseUrl?: string;
 };
 
 const ACCOUNT_SID_RE = /^AC[0-9a-fA-F]{32}$/;
 const SERVICE_SID_RE = /^VA[0-9a-fA-F]{32}$/;
 const API_KEY_RE = /^SK[0-9a-fA-F]{32}$/;
+
+const HOST_LABEL_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * Valida a base do Verify vinda do ambiente.
+ *
+ * Aceita apenas `https` + nome de host puro: sem caminho, porta exótica,
+ * query, fragmento ou usuário/senha embutidos, e sem IP literal. Como a
+ * credencial viaja no Basic Auth para essa URL, um valor malformado nunca
+ * pode redirecionar o segredo para outro destino.
+ */
+export function parseVerifyBaseUrl(value: string): { url: string | null; invalid: boolean } {
+  const raw = str(value);
+  if (raw === "") return { url: null, invalid: false };
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { url: null, invalid: true };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const labels = host.split(".");
+  const hostOk =
+    host.length <= 253 &&
+    labels.length >= 2 &&
+    labels.every((label) => label.length <= 63 && HOST_LABEL_RE.test(label)) &&
+    !IPV4_RE.test(host);
+
+  const clean =
+    parsed.protocol === "https:" &&
+    hostOk &&
+    (parsed.pathname === "" || parsed.pathname === "/") &&
+    parsed.search === "" &&
+    parsed.hash === "" &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.port === "";
+
+  return clean ? { url: `https://${host}`, invalid: false } : { url: null, invalid: true };
+}
 
 export type TwilioConfigRead = {
   config: TwilioConfig | null;
@@ -105,6 +166,7 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
   const customApiKey = str(env["TWILIO_CUSTOM_API_KEY"]);
   const connectorApiKey = str(env["TWILIO_API_KEY"]);
   const apiKeySecret = str(env["TWILIO_API_KEY_SECRET"]);
+  const verifyBase = parseVerifyBaseUrl(str(env["TWILIO_VERIFY_BASE_URL"]));
   const verifyServiceSid =
     str(env["TWILIO_VERIFY_SERVICE_SID"]) ||
     str(env["TWILIO_VERIFY_SERVICE"]) ||
@@ -150,6 +212,8 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
   if (!verifyServiceSid) missing.push("TWILIO_VERIFY_SERVICE_SID");
   else if (!SERVICE_SID_RE.test(verifyServiceSid)) invalid.push("TWILIO_VERIFY_SERVICE_SID");
 
+  if (verifyBase.invalid) invalid.push("TWILIO_VERIFY_BASE_URL");
+
   if (missing.length > 0 || invalid.length > 0) return { config: null, missing, invalid };
 
   return {
@@ -159,13 +223,19 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
       username: hasApiKeyPair ? apiKey : accountSid,
       password: hasApiKeyPair ? apiKeySecret : authToken,
       authMode,
+      ...(verifyBase.url ? { verifyBaseUrl: verifyBase.url } : {}),
     },
     missing,
     invalid,
   };
 }
 
-/** Diagnóstico público: **se** está configurado, nunca o valor. */
+/**
+ * Diagnóstico público: **se** está configurado, nunca o valor.
+ *
+ * A base do Verify (`TWILIO_VERIFY_BASE_URL`) de propósito **não** aparece
+ * aqui: ela só é revelada na resposta autenticada do probe.
+ */
 export function twilioConfigStatus(
   env: Record<string, string | undefined>,
 ): Record<string, unknown> {
@@ -268,6 +338,29 @@ export function mapTwilioError(body: unknown, httpStatus: number): PhoneProvider
   return { kind, code, message: message || `HTTP ${httpStatus}` };
 }
 
+/**
+ * Classifica a exceção de transporte sem guardar nada cru: a mensagem
+ * original pode conter a URL do serviço, então só extraímos uma categoria
+ * fechada. A mensagem é apenas testada por regex, nunca devolvida.
+ */
+export function classifyFetchError(error: unknown): string {
+  const name =
+    error && typeof error === "object" && "name" in error
+      ? String((error as { name?: unknown }).name ?? "")
+      : "";
+  const message =
+    error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : "";
+
+  if (name === "AbortError" || name === "TimeoutError") return "timeout";
+  if (/resolv|dns|getaddrinfo|enotfound|eai_again/i.test(message)) return "dns";
+  if (/certificate|tls|ssl|handshake/i.test(message)) return "tls";
+  if (/connect|refused|unreachable|reset|closed|socket/i.test(message)) return "connection";
+  if (name !== "") return `fetch_failed:${name.slice(0, 40)}`;
+  return "unknown";
+}
+
 async function callTwilio(input: {
   config: TwilioConfig;
   url: string;
@@ -289,12 +382,19 @@ async function callTwilio(input: {
   let response: Response;
   try {
     response = await input.fetchImpl(input.url, init);
-  } catch {
+  } catch (error) {
     // Nunca repetimos a mensagem crua: ela pode conter a URL do serviço.
+    const detail = classifyFetchError(error);
+    console.error(`[CompensAI] Twilio Verify inacessível (${detail}).`);
     return {
       ok: false,
       status: 0,
-      error: { kind: "network", code: null, message: "falha de rede ao contatar a Twilio" },
+      error: {
+        kind: "network",
+        code: null,
+        message: "falha de rede ao contatar a Twilio",
+        detail,
+      },
     };
   }
 
@@ -316,7 +416,8 @@ async function callTwilio(input: {
 }
 
 function serviceUrl(config: TwilioConfig, suffix = ""): string {
-  return `https://verify.twilio.com/v2/Services/${encodeURIComponent(config.verifyServiceSid)}${suffix}`;
+  const base = config.verifyBaseUrl ?? DEFAULT_VERIFY_BASE_URL;
+  return `${base}/v2/Services/${encodeURIComponent(config.verifyServiceSid)}${suffix}`;
 }
 
 /** GET no serviço Verify: valida credencial + Service SID sem enviar SMS. */
@@ -325,6 +426,48 @@ export async function checkVerifyService(
   fetchImpl: FetchImpl,
 ): Promise<TwilioCallResult> {
   return callTwilio({ config, url: serviceUrl(config), method: "GET", fetchImpl });
+}
+
+/**
+ * Hosts candidatos do Verify.
+ *
+ * Lista fixa e fechada: nenhum host vem da requisição, então o probe não vira
+ * proxy aberto nem vetor de SSRF. Serve para separar "bloqueio por hostname"
+ * de "bloqueio amplo de saída" no runtime publicado.
+ */
+export const VERIFY_PROBE_HOSTS = [
+  "verify.twilio.com",
+  "verify.us1.twilio.com",
+  "verify.ie1.twilio.com",
+  "verify.au1.twilio.com",
+] as const;
+
+/**
+ * GET de validação (sem SMS, sem custo) em cada host candidato, em paralelo.
+ *
+ * Cada host recebe o mesmo Basic Auth da configuração; nada é gravado.
+ */
+export async function probeVerifyHosts(
+  config: TwilioConfig,
+  fetchImpl: FetchImpl,
+): Promise<Array<Record<string, unknown>>> {
+  return Promise.all(
+    VERIFY_PROBE_HOSTS.map(async (host) => {
+      const started = Date.now();
+      const result = await checkVerifyService(
+        { ...config, verifyBaseUrl: `https://${host}` },
+        fetchImpl,
+      );
+      return {
+        host,
+        ms: Date.now() - started,
+        status: result.status,
+        ok: result.ok,
+        error_kind: result.ok ? null : result.error.kind,
+        error_detail: result.ok ? null : (result.error.detail ?? null),
+      };
+    }),
+  );
 }
 
 async function requestVerification(
@@ -883,12 +1026,68 @@ export async function getPhoneStatusForUser(
 
 /* --------------------------------------------------------------- diagnóstico */
 
+/** Comparação de tamanho constante (mesmo padrão dos outros webhooks do app). */
+function safeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1)
+    diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  return diff === 0;
+}
+
+/**
+ * Compara o token do diagnóstico sem vazar o tamanho.
+ *
+ * Usa SHA-256 para igualar os comprimentos antes da comparação; se o runtime
+ * não tiver Web Crypto, cai na comparação direta de tamanho constante.
+ */
+async function diagTokenMatches(provided: string, expected: string): Promise<boolean> {
+  if (provided === "" || expected === "") return false;
+
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return safeEqual(provided, expected);
+
+  const encoder = new TextEncoder();
+  const [leftDigest, rightDigest] = await Promise.all([
+    subtle.digest("SHA-256", encoder.encode(provided)),
+    subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const left = new Uint8Array(leftDigest);
+  const right = new Uint8Array(rightDigest);
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  }
+  return diff === 0;
+}
+
+/**
+ * Token do diagnóstico de hosts (`TWILIO_DIAG_TOKEN`). `null` desliga o probe:
+ * um endpoint público que dispara chamadas ao provedor não pode ficar aberto.
+ */
+function diagToken(env: Record<string, string | undefined>): string | null {
+  const value = str(env["TWILIO_DIAG_TOKEN"]);
+  return value.length >= DIAG_TOKEN_MIN_LENGTH ? value : null;
+}
+
+/** Token enviado pelo operador: `X-Diag-Token` ou `Authorization: Bearer ...`. */
+function providedDiagToken(request: Request): string {
+  const header = request.headers.get("x-diag-token");
+  if (header) return header.trim();
+  const authorization = request.headers.get("authorization") ?? "";
+  return authorization.replace(/^Bearer\s+/i, "").trim();
+}
+
 /**
  * `GET /api/public/twilio-status`
  *
  * Mostra **se** as variáveis existem e se o formato parece correto — nunca o
  * valor. Com `?live=1` faz um GET no serviço Verify (sem enviar SMS, sem custo)
  * para confirmar credencial + Service SID de verdade.
+ *
+ * `?probe=1` (ou `?live=1&probe=1`) testa os hosts candidatos do Verify e é a
+ * única parte que exige token (`TWILIO_DIAG_TOKEN`). Sem token, ou com token
+ * errado, responde 403 e **não** chama a Twilio.
  */
 export async function handleTwilioStatus(
   request: Request,
@@ -898,12 +1097,41 @@ export async function handleTwilioStatus(
   const { config, missing } = readTwilioConfig(env);
   const url = new URL(request.url);
   const wantLive = url.searchParams.get("live") === "1" || url.searchParams.get("live") === "true";
+  const wantProbe = url.searchParams.get("probe") === "1";
 
   const body: Record<string, unknown> = {
     ok: true,
     endpoint: "twilio-status",
     twilio: twilioConfigStatus(env),
   };
+
+  if (wantProbe) {
+    const expected = diagToken(env);
+    if (!expected) {
+      console.error(
+        "[CompensAI] TWILIO_DIAG_TOKEN ausente: probe do Verify recusado (fail closed).",
+      );
+      body["ok"] = false;
+      body["probe"] = { checked: false, reason: "disabled" };
+      return json(body, 403);
+    }
+    if (!(await diagTokenMatches(providedDiagToken(request), expected))) {
+      body["ok"] = false;
+      body["probe"] = { checked: false, reason: "unauthorized" };
+      return json(body, 403);
+    }
+    if (!config) {
+      body["probe"] = { checked: false, reason: "not_configured", missing };
+    } else {
+      const fetchImpl = override?.fetchImpl ?? (fetch as unknown as FetchImpl);
+      const hosts = await probeVerifyHosts(config, fetchImpl);
+      body["probe"] = {
+        checked: true,
+        base_url: config.verifyBaseUrl ?? DEFAULT_VERIFY_BASE_URL,
+        hosts,
+      };
+    }
+  }
 
   if (wantLive) {
     if (!config) {
@@ -920,6 +1148,7 @@ export async function handleTwilioStatus(
             error_kind: result.error.kind,
             error_code: result.error.code,
             error_message: result.error.message,
+            error_detail: result.error.detail ?? null,
           };
     }
   }
