@@ -117,13 +117,10 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
   // TWILIO_API_KEY pode ser uma chave interna do conector (não é um SID SK...):
   // nesse caso ele é ignorado, nunca marcado como inválido.
   let apiKey = "";
-  let apiKeyName = "";
   if (customApiKey !== "") {
     apiKey = customApiKey;
-    apiKeyName = "TWILIO_CUSTOM_API_KEY";
   } else if (connectorApiKey !== "" && API_KEY_RE.test(connectorApiKey)) {
     apiKey = connectorApiKey;
-    apiKeyName = "TWILIO_API_KEY";
   }
 
   const hasApiKeyPair = apiKey !== "" && apiKeySecret !== "";
@@ -163,7 +160,6 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
     missing,
     invalid,
   };
-  void apiKeyName;
 }
 
 /** Diagnóstico público: **se** está configurado, nunca o valor. */
