@@ -60,9 +60,12 @@ const OTHER_USER = "user-2";
 const ACCOUNT_SID = `AC${"a".repeat(32)}`;
 const SERVICE_SID = `VA${"b".repeat(32)}`;
 const API_KEY = `SK${"c".repeat(32)}`;
+const CUSTOM_API_KEY = `SK${"d".repeat(32)}`;
 /** Valor fictício, só para provar que nunca vaza. */
 const API_KEY_SECRET = "segredo-ficticio-da-api-key";
 const AUTH_TOKEN = "token-ficticio-da-conta";
+/** Valor típico injetado pelo conector Lovable: não é um API Key SID SK... */
+const CONNECTOR_KEY = "chave-interna-do-conector-lovable";
 
 const CONFIG: TwilioConfig = {
   accountSid: ACCOUNT_SID,
@@ -82,6 +85,7 @@ const BASE_ENV: Record<string, string | undefined> = {
 
 const ENV_KEYS = [
   ...Object.keys(BASE_ENV),
+  "TWILIO_CUSTOM_API_KEY",
   "TWILIO_VERIFY_SERVICE",
   "TWILIO_SERVICE_SID",
   "PHONE_VERIFICATION_REQUIRED",
@@ -599,6 +603,75 @@ test("config: formato inválido é recusado sem revelar o conteúdo", () => {
   const dump = JSON.stringify(read);
   assert.ok(!dump.includes("AC123"));
   assert.ok(!dump.includes("servico"));
+});
+
+test("config: TWILIO_CUSTOM_API_KEY tem prioridade sobre TWILIO_API_KEY", () => {
+  const read = readTwilioConfig({
+    ...BASE_ENV,
+    TWILIO_CUSTOM_API_KEY: CUSTOM_API_KEY,
+  });
+  assert.ok(read.config);
+  assert.equal(read.config?.authMode, "api_key");
+  assert.equal(read.config?.username, CUSTOM_API_KEY);
+  assert.equal(read.config?.password, API_KEY_SECRET);
+});
+
+test("config: valor do conector (não SK...) é ignorado, sem marcar inválido", () => {
+  // Conector vinculado + Auth Token: cai no Auth Token, sem erro.
+  const withToken = readTwilioConfig({
+    TWILIO_ACCOUNT_SID: ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: AUTH_TOKEN,
+    TWILIO_API_KEY: CONNECTOR_KEY,
+    TWILIO_VERIFY_SERVICE_SID: SERVICE_SID,
+  });
+  assert.ok(withToken.config, "valor do conector não pode quebrar a configuração");
+  assert.equal(withToken.config?.authMode, "auth_token");
+  assert.deepEqual(withToken.invalid, []);
+
+  // Conector vinculado + API Key válida em TWILIO_CUSTOM_API_KEY: usa a custom.
+  const withCustom = readTwilioConfig({
+    TWILIO_ACCOUNT_SID: ACCOUNT_SID,
+    TWILIO_API_KEY: CONNECTOR_KEY,
+    TWILIO_CUSTOM_API_KEY: CUSTOM_API_KEY,
+    TWILIO_API_KEY_SECRET: API_KEY_SECRET,
+    TWILIO_VERIFY_SERVICE_SID: SERVICE_SID,
+  });
+  assert.ok(withCustom.config);
+  assert.equal(withCustom.config?.username, CUSTOM_API_KEY);
+  assert.deepEqual(withCustom.invalid, []);
+
+  // Só o valor do conector, sem Auth Token nem custom: falta credencial.
+  const onlyConnector = readTwilioConfig({
+    TWILIO_ACCOUNT_SID: ACCOUNT_SID,
+    TWILIO_API_KEY: CONNECTOR_KEY,
+    TWILIO_VERIFY_SERVICE_SID: SERVICE_SID,
+  });
+  assert.equal(onlyConnector.config, null);
+  assert.deepEqual(onlyConnector.invalid, []);
+  assert.ok(onlyConnector.missing.some((entry) => entry.includes("TWILIO_AUTH_TOKEN")));
+});
+
+test("config: TWILIO_CUSTOM_API_KEY com formato errado é recusada sem vazar", () => {
+  const read = readTwilioConfig({
+    TWILIO_ACCOUNT_SID: ACCOUNT_SID,
+    TWILIO_CUSTOM_API_KEY: "nao-e-um-sid",
+    TWILIO_API_KEY_SECRET: API_KEY_SECRET,
+    TWILIO_VERIFY_SERVICE_SID: SERVICE_SID,
+  });
+  assert.equal(read.config, null);
+  assert.ok(read.invalid.includes("TWILIO_CUSTOM_API_KEY"));
+  assert.ok(!JSON.stringify(read).includes("nao-e-um-sid"));
+});
+
+test("config: TWILIO_CUSTOM_API_KEY sem o Secret aponta o que falta", () => {
+  const read = readTwilioConfig({
+    TWILIO_ACCOUNT_SID: ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: AUTH_TOKEN,
+    TWILIO_CUSTOM_API_KEY: CUSTOM_API_KEY,
+    TWILIO_VERIFY_SERVICE_SID: SERVICE_SID,
+  });
+  assert.equal(read.config, null);
+  assert.ok(read.missing.includes("TWILIO_API_KEY_SECRET"));
 });
 
 test("config: aliases do Service SID são aceitos", () => {
