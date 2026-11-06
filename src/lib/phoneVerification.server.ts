@@ -19,6 +19,12 @@
  * - O diagnóstico de hosts (`?live=1&probe=1`) faz um GET por host aceito e é
  *   o único ponto que exige `TWILIO_DIAG_TOKEN` (header `X-Diag-Token` ou
  *   `Authorization: Bearer`); sem token ele falha fechado, sem chamar a Twilio.
+ * - Falha de transporte é classificada percorrendo `error.cause` e
+ *   `AggregateError.errors` com profundidade limitada. A resposta expõe só
+ *   `error_name` e `error_cause_code` (ambos validados + allowlist) e a
+ *   categoria em `error_detail`; mensagem original, URL e credencial nunca
+ *   saem daqui. Em workerd o relógio só avança com I/O, então `ms: 0` com
+ *   `io_observed: false` significa rejeição local, não latência zero.
  * - O estado por conta fica em `auth.users.app_metadata.compensai_phone`
  *   (chave separada do billing, gravada só com a service role, sem DDL).
  * - Rate limit, tentativas e expiração são controlados aqui, antes e depois da
@@ -342,26 +348,209 @@ export function mapTwilioError(body: unknown, httpStatus: number): PhoneProvider
 }
 
 /**
+ * Categorias fechadas de falha de transporte. Nenhuma delas carrega texto do
+ * provedor: só o nome da categoria (e, quando existe, um código conhecido).
+ */
+export type FetchErrorCategory =
+  | "timeout"
+  | "dns"
+  | "tls"
+  | "connection"
+  | "invalid_url"
+  | "cannot_load"
+  | "egress_blocked"
+  | "subrequest_limit";
+
+/** Profundidade máxima percorrida em `error.cause` (nível 0 = erro original). */
+const MAX_CAUSE_DEPTH = 3;
+/** Máximo de itens inspecionados em `AggregateError.errors` por nível. */
+const MAX_AGGREGATE_ERRORS = 3;
+/** Teto de nós coletados, para uma cadeia patológica não crescer sem limite. */
+const MAX_CHAIN_NODES = 12;
+/** Nome de exceção seguro: curto, ASCII e sem espaço/URL. */
+const SAFE_ERROR_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+
+/**
+ * Códigos de sistema que sabemos interpretar e que não carregam contexto
+ * sensível. A allowlist é fechada de propósito: código de terceiro pode vir com
+ * qualquer texto, então só sai daqui o que está aqui.
+ */
+const FETCH_ERROR_CODES: Record<string, FetchErrorCategory> = {
+  // DNS
+  EAI_AGAIN: "dns",
+  EAI_FAIL: "dns",
+  EAI_NONAME: "dns",
+  EAI_NODATA: "dns",
+  ENOTFOUND: "dns",
+  ENODATA: "dns",
+  // TLS
+  CERT_HAS_EXPIRED: "tls",
+  CERT_NOT_YET_VALID: "tls",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "tls",
+  SELF_SIGNED_CERT_IN_CHAIN: "tls",
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY: "tls",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "tls",
+  ERR_TLS_CERT_ALTNAME_INVALID: "tls",
+  // Conexão
+  ECONNREFUSED: "connection",
+  ECONNRESET: "connection",
+  EHOSTUNREACH: "connection",
+  ENETUNREACH: "connection",
+  EPIPE: "connection",
+  UND_ERR_SOCKET: "connection",
+  ERR_STREAM_PREMATURE_CLOSE: "connection",
+  // Tempo
+  ETIMEDOUT: "timeout",
+  UND_ERR_CONNECT_TIMEOUT: "timeout",
+  UND_ERR_HEADERS_TIMEOUT: "timeout",
+  UND_ERR_BODY_TIMEOUT: "timeout",
+  UND_ERR_ABORTED: "timeout",
+  ABORT_ERR: "timeout",
+  ERR_CANCELED: "timeout",
+};
+
+/**
+ * Reconhecimento por mensagem — última linha de defesa quando o runtime não
+ * preenche `code` (é o caso do workerd, que lança `TypeError` sem código).
+ * A mensagem é apenas testada: nada dela é devolvido.
+ */
+const FETCH_ERROR_MESSAGE_RULES: ReadonlyArray<{ pattern: RegExp; category: FetchErrorCategory }> =
+  [
+    { pattern: /timed?\s?out|timeout/i, category: "timeout" },
+    { pattern: /invalid url/i, category: "invalid_url" },
+    { pattern: /too many subrequests/i, category: "subrequest_limit" },
+    { pattern: /resolv|dns|getaddrinfo|enotfound|eai_again|eai_fail/i, category: "dns" },
+    { pattern: /certificate|cert_|tls|ssl|handshake|self.signed/i, category: "tls" },
+    { pattern: /cannot load|fetch api cannot/i, category: "cannot_load" },
+    { pattern: /not allowed|denied|blocked|egress|policy/i, category: "egress_blocked" },
+    {
+      pattern: /connect|refused|unreachable|reset|closed|socket|connection lost/i,
+      category: "connection",
+    },
+  ];
+
+type FetchErrorNode = {
+  name: string;
+  message: string;
+  code: string | null;
+};
+
+/** Lê um nó da cadeia sem confiar em nada: getter que lança é ignorado. */
+function readFetchErrorNode(value: unknown): FetchErrorNode | null {
+  if (!value || typeof value !== "object") return null;
+  try {
+    const record = value as { name?: unknown; message?: unknown; code?: unknown };
+    const name = typeof record.name === "string" ? record.name : "";
+    const message = typeof record.message === "string" ? record.message : "";
+    const rawCode = typeof record.code === "string" ? record.code.trim().toUpperCase() : "";
+    const code = SAFE_ERROR_NAME_RE.test(rawCode) ? rawCode : null;
+    return { name, message, code };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Coleta `error` + `error.cause` + `AggregateError.errors`, com profundidade e
+ * tamanho limitados. Protege contra ciclos (`cause` apontando para si mesmo) e
+ * contra cadeias longas.
+ */
+function collectFetchErrorChain(error: unknown): FetchErrorNode[] {
+  const nodes: FetchErrorNode[] = [];
+  const seen = new Set<object>();
+
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > MAX_CAUSE_DEPTH || nodes.length >= MAX_CHAIN_NODES) return;
+    if (!value || typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+
+    const node = readFetchErrorNode(value);
+    if (!node) return;
+    nodes.push(node);
+
+    try {
+      const record = value as { cause?: unknown; errors?: unknown };
+      visit(record.cause, depth + 1);
+      if (Array.isArray(record.errors)) {
+        for (const child of record.errors.slice(0, MAX_AGGREGATE_ERRORS)) {
+          visit(child, depth + 1);
+        }
+      }
+    } catch {
+      // Acesso a `cause`/`errors` que lança não invalida o nó já coletado.
+    }
+  };
+
+  visit(error, 0);
+  return nodes;
+}
+
+export type FetchErrorDiagnostics = {
+  /** Nome da exceção validado (`TypeError`, `AbortError`, ...) ou `null`. */
+  name: string | null;
+  /** Código conhecido da allowlist (`EAI_AGAIN`, ...) ou `null`. */
+  causeCode: string | null;
+  /** Categoria fechada, com o código quando houver: `dns:EAI_AGAIN`. */
+  detail: string;
+};
+
+/**
+ * Diagnóstico seguro de uma falha de transporte.
+ *
+ * A mensagem original nunca é devolvida (pode conter URL, SID ou credencial):
+ * só sai daqui categoria fechada, nome de exceção validado e código de uma
+ * allowlist. A causa real do undici/Node fica em `error.cause` e a do
+ * `AggregateError` em `errors[]` — é isso que este código percorre.
+ */
+export function fetchErrorDiagnostics(error: unknown): FetchErrorDiagnostics {
+  const chain = collectFetchErrorChain(error);
+  const top = chain[0];
+  const name = top && SAFE_ERROR_NAME_RE.test(top.name) ? top.name : null;
+
+  let category: FetchErrorCategory | null = null;
+  let causeCode: string | null = null;
+
+  for (const node of chain) {
+    if (!node.code) continue;
+    const mapped = FETCH_ERROR_CODES[node.code];
+    if (!mapped) continue;
+    category = mapped;
+    causeCode = node.code;
+    break;
+  }
+
+  if (!category && (top?.name === "AbortError" || top?.name === "TimeoutError")) {
+    category = "timeout";
+  }
+
+  if (!category) {
+    for (const node of chain) {
+      const rule = FETCH_ERROR_MESSAGE_RULES.find((entry) => entry.pattern.test(node.message));
+      if (!rule) continue;
+      category = rule.category;
+      break;
+    }
+  }
+
+  const detail = category
+    ? causeCode
+      ? `${category}:${causeCode}`
+      : category
+    : name
+      ? `fetch_failed:${name}`
+      : "unknown";
+
+  return { name, causeCode, detail };
+}
+
+/**
  * Classifica a exceção de transporte sem guardar nada cru: a mensagem
  * original pode conter a URL do serviço, então só extraímos uma categoria
- * fechada. A mensagem é apenas testada por regex, nunca devolvida.
+ * fechada. Equivale a `fetchErrorDiagnostics(error).detail`.
  */
 export function classifyFetchError(error: unknown): string {
-  const name =
-    error && typeof error === "object" && "name" in error
-      ? String((error as { name?: unknown }).name ?? "")
-      : "";
-  const message =
-    error && typeof error === "object" && "message" in error
-      ? String((error as { message?: unknown }).message ?? "")
-      : "";
-
-  if (name === "AbortError" || name === "TimeoutError") return "timeout";
-  if (/resolv|dns|getaddrinfo|enotfound|eai_again/i.test(message)) return "dns";
-  if (/certificate|tls|ssl|handshake/i.test(message)) return "tls";
-  if (/connect|refused|unreachable|reset|closed|socket/i.test(message)) return "connection";
-  if (name !== "") return `fetch_failed:${name.slice(0, 40)}`;
-  return "unknown";
+  return fetchErrorDiagnostics(error).detail;
 }
 
 async function callTwilio(input: {
@@ -387,8 +576,12 @@ async function callTwilio(input: {
     response = await input.fetchImpl(input.url, init);
   } catch (error) {
     // Nunca repetimos a mensagem crua: ela pode conter a URL do serviço.
-    const detail = classifyFetchError(error);
-    console.error(`[CompensAI] Twilio Verify inacessível (${detail}).`);
+    const diagnostics = fetchErrorDiagnostics(error);
+    console.error(
+      `[CompensAI] Twilio Verify inacessível (${diagnostics.detail}, name=${
+        diagnostics.name ?? "unknown"
+      }, code=${diagnostics.causeCode ?? "unknown"}).`,
+    );
     return {
       ok: false,
       status: 0,
@@ -396,7 +589,9 @@ async function callTwilio(input: {
         kind: "network",
         code: null,
         message: "falha de rede ao contatar a Twilio",
-        detail,
+        detail: diagnostics.detail,
+        errorName: diagnostics.name,
+        causeCode: diagnostics.causeCode,
       },
     };
   }
@@ -432,12 +627,33 @@ export async function checkVerifyService(
 }
 
 /**
+ * Relógio para medir o probe.
+ *
+ * IMPORTANTE (Cloudflare/workerd): o relógio do runtime só avança quando há
+ * I/O — entre chamadas de `Date.now()` (e de `performance.now()`) ele fica
+ * parado. Por isso `ms: 0` aqui **não** significa "0 ms de latência": significa
+ * que nenhuma I/O foi contabilizada entre o início e a falha, ou seja, o
+ * runtime rejeitou a subrequest localmente. `performance.now()` é preferido
+ * quando existe (resolução maior fora do workerd).
+ */
+function nowMs(): number {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+/**
  * GET de validação (sem SMS, sem custo) nos hosts aceitos, em paralelo.
  *
  * Percorre exatamente `VERIFY_BASE_HOSTS`, a mesma lista que valida
  * `TWILIO_VERIFY_BASE_URL`: o probe não pode alcançar host fora dela. Hoje é um
  * único GET; a estrutura fica pronta para o dia em que houver outro host
  * documentado para este fluxo.
+ *
+ * `ms` é o relógio observado e `io_observed` diz se houve avanço de relógio
+ * (ver `nowMs`): `io_observed: false` + `ms: 0` = rejeição sem I/O, não
+ * latência zero.
  */
 export async function probeVerifyHosts(
   config: TwilioConfig,
@@ -445,18 +661,22 @@ export async function probeVerifyHosts(
 ): Promise<Array<Record<string, unknown>>> {
   return Promise.all(
     VERIFY_BASE_HOSTS.map(async (host) => {
-      const started = Date.now();
+      const started = nowMs();
       const result = await checkVerifyService(
         { ...config, verifyBaseUrl: `https://${host}` },
         fetchImpl,
       );
+      const ms = Math.max(0, Math.round(nowMs() - started));
       return {
         host,
-        ms: Date.now() - started,
+        ms,
+        io_observed: ms > 0,
         status: result.status,
         ok: result.ok,
         error_kind: result.ok ? null : result.error.kind,
         error_detail: result.ok ? null : (result.error.detail ?? null),
+        error_name: result.ok ? null : (result.error.errorName ?? null),
+        error_cause_code: result.ok ? null : (result.error.causeCode ?? null),
       };
     }),
   );
@@ -1142,6 +1362,8 @@ export async function handleTwilioStatus(
             error_code: result.error.code,
             error_message: result.error.message,
             error_detail: result.error.detail ?? null,
+            error_name: result.error.errorName ?? null,
+            error_cause_code: result.error.causeCode ?? null,
           };
     }
   }

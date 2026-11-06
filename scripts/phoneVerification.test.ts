@@ -35,6 +35,7 @@ import {
   checkPhoneVerification,
   checkVerifyService,
   classifyFetchError,
+  fetchErrorDiagnostics,
   getPhoneStatusForUser,
   handleTwilioStatus,
   mapTwilioError,
@@ -1358,6 +1359,109 @@ test("rede: exceção de transporte vira categoria fechada", () => {
   }
 });
 
+test("rede: causa do undici (error.cause.code) revela o motivo real", () => {
+  const error = Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("network error"), { code: "ENOTFOUND" }),
+  });
+  const diagnostics = fetchErrorDiagnostics(error);
+  assert.equal(diagnostics.name, "TypeError");
+  assert.equal(diagnostics.causeCode, "ENOTFOUND");
+  assert.equal(diagnostics.detail, "dns:ENOTFOUND");
+  assert.equal(classifyFetchError(error), "dns:ENOTFOUND");
+});
+
+test("rede: AggregateError é inspecionado (errors[0].code)", () => {
+  const aggregate = new AggregateError(
+    [Object.assign(new Error("network error"), { code: "ECONNREFUSED" })],
+    "network error",
+  );
+  const diagnostics = fetchErrorDiagnostics(aggregate);
+  assert.equal(diagnostics.causeCode, "ECONNREFUSED");
+  assert.equal(diagnostics.detail, "connection:ECONNREFUSED");
+});
+
+test("rede: profundidade da cadeia é limitada (3 níveis de cause)", () => {
+  function chain(depth: number): unknown {
+    let node: Record<string, unknown> = { name: "Error", message: "camada", code: "ENOTFOUND" };
+    for (let index = 0; index < depth; index += 1) {
+      node = { name: "Error", message: "camada", cause: node };
+    }
+    return node;
+  }
+
+  assert.equal(fetchErrorDiagnostics(chain(3)).causeCode, "ENOTFOUND");
+  const deep = fetchErrorDiagnostics(chain(5));
+  assert.equal(deep.causeCode, null);
+  assert.equal(deep.detail, "fetch_failed:Error");
+});
+
+test("rede: ciclo em cause não trava a coleta", () => {
+  const cyclic: Record<string, unknown> = { name: "TypeError", message: "fetch failed" };
+  cyclic["cause"] = cyclic;
+  assert.equal(classifyFetchError(cyclic), "fetch_failed:TypeError");
+});
+
+test("rede: código fora da allowlist não é exposto", () => {
+  const unknown = fetchErrorDiagnostics({
+    name: "TypeError",
+    message: "fetch failed",
+    code: "ALGUM_CODIGO_DESCONHECIDO",
+  });
+  assert.equal(unknown.causeCode, null);
+  assert.equal(unknown.detail, "fetch_failed:TypeError");
+
+  const urlAsCode = fetchErrorDiagnostics({
+    name: "TypeError",
+    message: "fetch failed",
+    code: "https://verify.twilio.com/v2/Services/VA123",
+  });
+  assert.equal(urlAsCode.causeCode, null);
+  assert.ok(!urlAsCode.detail.includes("verify.twilio.com"));
+  assert.ok(!JSON.stringify(urlAsCode).includes("verify.twilio.com"));
+});
+
+test("rede: nome de exceção inválido não é exposto", () => {
+  const diagnostics = fetchErrorDiagnostics({
+    name: "https://verify.twilio.com",
+    message: "algo",
+  });
+  assert.equal(diagnostics.name, null);
+  assert.equal(diagnostics.detail, "unknown");
+  assert.equal(fetchErrorDiagnostics("não é um erro").detail, "unknown");
+  assert.deepEqual(fetchErrorDiagnostics(undefined), {
+    name: null,
+    causeCode: null,
+    detail: "unknown",
+  });
+});
+
+test("rede: mensagens do workerd ganham categoria própria sem ecoar a URL", () => {
+  const casesTable: Array<[unknown, string]> = [
+    [new TypeError("Invalid URL"), "invalid_url"],
+    [
+      new TypeError(`Fetch API cannot load: https://verify.twilio.com/v2/Services/${SERVICE_SID}`),
+      "cannot_load",
+    ],
+    [new TypeError("Network connection lost."), "connection"],
+    [new TypeError("Too many subrequests by single Worker invocation."), "subrequest_limit"],
+    [new TypeError("Egress denied by policy"), "egress_blocked"],
+    [
+      Object.assign(new Error("boom"), { code: "UND_ERR_CONNECT_TIMEOUT" }),
+      "timeout:UND_ERR_CONNECT_TIMEOUT",
+    ],
+    [Object.assign(new Error("boom"), { code: "CERT_HAS_EXPIRED" }), "tls:CERT_HAS_EXPIRED"],
+  ];
+  for (const [error, expected] of casesTable) {
+    assert.equal(classifyFetchError(error), expected);
+  }
+
+  const leaky = classifyFetchError(
+    new TypeError(`Fetch API cannot load: https://verify.twilio.com/v2/Services/${SERVICE_SID}`),
+  );
+  assert.ok(!leaky.includes(SERVICE_SID));
+  assert.ok(!leaky.includes("verify.twilio.com"));
+});
+
 test("rede: falha de transporte no ?live=1 explica a categoria sem vazar nada", async () => {
   const consoleCapture = captureConsole();
   restoreEnv();
@@ -1541,6 +1645,100 @@ test("probe: sem credencial configurada não faz chamada, mesmo com token", asyn
     assert.equal(probe["reason"], "not_configured");
     assert.equal(fake.calls.length, 0);
   } finally {
+    restoreEnv();
+  }
+});
+
+test("probe: falha com causa expõe error_name e error_cause_code validados", async () => {
+  const consoleCapture = captureConsole();
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_API_KEY"] = API_KEY;
+  process.env["TWILIO_API_KEY_SECRET"] = API_KEY_SECRET;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  process.env["TWILIO_DIAG_TOKEN"] = DIAG_TOKEN;
+
+  const failure = Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("network error"), { code: "EAI_AGAIN" }),
+  });
+  const impl = () => Promise.reject(failure);
+
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?probe=1&live=1", {
+        headers: { authorization: `Bearer ${DIAG_TOKEN}` },
+      }),
+      { fetchImpl: impl },
+    );
+    assert.equal(response.status, 200);
+    const body = await readJson(response);
+
+    const probe = objectField(body, "probe");
+    const hosts = probe["hosts"] as Array<Record<string, unknown>>;
+    assert.equal(hosts.length, 1);
+    const entry = hosts[0] ?? {};
+    assert.equal(entry["host"], "verify.twilio.com");
+    assert.equal(entry["status"], 0);
+    assert.equal(entry["ok"], false);
+    assert.equal(entry["error_kind"], "network");
+    assert.equal(entry["error_detail"], "dns:EAI_AGAIN");
+    assert.equal(entry["error_name"], "TypeError");
+    assert.equal(entry["error_cause_code"], "EAI_AGAIN");
+
+    const live = objectField(body, "live");
+    assert.equal(live["error_detail"], "dns:EAI_AGAIN");
+    assert.equal(live["error_name"], "TypeError");
+    assert.equal(live["error_cause_code"], "EAI_AGAIN");
+
+    const dump = JSON.stringify(body);
+    assert.ok(!dump.includes(API_KEY_SECRET));
+    assert.ok(!dump.includes(API_KEY));
+    assert.ok(!dump.includes(SERVICE_SID));
+    assert.ok(!dump.includes(DIAG_TOKEN));
+    assert.ok(!dump.includes("fetch failed"));
+    assert.ok(!dump.includes("network error"));
+
+    const logs = consoleCapture.messages.join(" | ");
+    assert.ok(logs.includes("dns:EAI_AGAIN"));
+    assert.ok(!logs.includes(API_KEY_SECRET));
+    assert.ok(!logs.includes("fetch failed"));
+  } finally {
+    consoleCapture.restore();
+    restoreEnv();
+  }
+});
+
+test("probe: ms 0 significa 'sem I/O observada', não latência zero", async () => {
+  const consoleCapture = captureConsole();
+  restoreEnv();
+  for (const key of ENV_KEYS) delete process.env[key];
+  process.env["TWILIO_ACCOUNT_SID"] = ACCOUNT_SID;
+  process.env["TWILIO_AUTH_TOKEN"] = AUTH_TOKEN;
+  process.env["TWILIO_VERIFY_SERVICE_SID"] = SERVICE_SID;
+  process.env["TWILIO_DIAG_TOKEN"] = DIAG_TOKEN;
+
+  const failure = new TypeError("fetch failed");
+  const impl = () => Promise.reject(failure);
+
+  try {
+    const response = await handleTwilioStatus(
+      new Request("https://app.test/api/public/twilio-status?probe=1", {
+        headers: { "x-diag-token": DIAG_TOKEN },
+      }),
+      { fetchImpl: impl },
+    );
+    const probe = objectField(await readJson(response), "probe");
+    const entry = (probe["hosts"] as Array<Record<string, unknown>>)[0] ?? {};
+    const ms = entry["ms"];
+    assert.equal(typeof ms, "number");
+    assert.ok((ms as number) >= 0);
+    // `io_observed` é sempre coerente com o relógio observado.
+    assert.equal(entry["io_observed"], (ms as number) > 0);
+    // Rejeição imediata (sem I/O) não vira latência: o campo diz isso.
+    assert.equal(entry["io_observed"], false);
+  } finally {
+    consoleCapture.restore();
     restoreEnv();
   }
 });

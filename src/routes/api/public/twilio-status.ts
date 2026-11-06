@@ -15,6 +15,14 @@ import { handleTwilioStatus } from "@/lib/phoneVerification.server";
  * lista aceita apenas `verify.twilio.com` — host regional só entra se a Twilio
  * documentar compatibilidade com este fluxo (Verify SMS).
  *
+ * Falha de transporte vem explicada por `error_detail` (categoria fechada, com
+ * código quando conhecido: `dns:EAI_AGAIN`), `error_name` e `error_cause_code`.
+ * Esses três campos são validados e nunca carregam mensagem, URL ou credencial.
+ *
+ * No probe, `ms` é o relógio observado e `io_observed` diz se ele avançou. Em
+ * Cloudflare/workerd o relógio só anda com I/O: `ms: 0` + `io_observed: false`
+ * significa rejeição local sem I/O — não "latência zero".
+ *
  * Não há POST: este endpoint não envia SMS nem altera conta.
  */
 export const Route = createFileRoute("/api/public/twilio-status")({

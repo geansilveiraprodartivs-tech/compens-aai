@@ -483,10 +483,23 @@ export type PhoneProviderError = {
   message: string;
   /**
    * Categoria técnica da falha de transporte (`dns`, `connection`, `tls`,
-   * `timeout`, `fetch_failed:<Name>`). Serve só para diagnóstico: nunca
-   * contém URL, telefone, credencial nem a mensagem original da exceção.
+   * `timeout`, `invalid_url`, `cannot_load`, `egress_blocked`,
+   * `subrequest_limit`, `fetch_failed:<Name>`), opcionalmente com o código
+   * conhecido (`dns:EAI_AGAIN`). Serve só para diagnóstico: nunca contém URL,
+   * telefone, credencial nem a mensagem original da exceção.
    */
   detail?: string;
+  /**
+   * Nome da exceção de transporte já validado (`TypeError`, `AbortError`, ...).
+   * `null` quando o nome não passa no formato seguro.
+   */
+  errorName?: string | null;
+  /**
+   * Código de sistema conhecido (`EAI_AGAIN`, `ENOTFOUND`, `ECONNREFUSED`,
+   * `UND_ERR_CONNECT_TIMEOUT`, `CERT_HAS_EXPIRED`, ...). Só sai daqui código
+   * da allowlist fechada; qualquer outro vira `null`.
+   */
+  causeCode?: string | null;
 };
 
 export type SendCodeReason =
