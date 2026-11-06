@@ -6,9 +6,12 @@
  *   valida o código é a Twilio, então nenhum código é inventado, salvo ou
  *   comparado do nosso lado.
  * - Credenciais vêm exclusivamente das Secrets do servidor
- *   (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` ou `TWILIO_API_KEY` +
+ *   (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` ou `TWILIO_CUSTOM_API_KEY` +
  *   `TWILIO_API_KEY_SECRET`, `TWILIO_VERIFY_SERVICE_SID`). Nada é enviado ao
  *   navegador, impresso em log ou gravado no repositório.
+ * - `TWILIO_CUSTOM_API_KEY` tem prioridade sobre `TWILIO_API_KEY`: o valor
+ *   desta última pode ser uma chave interna do conector Lovable (não é um
+ *   API Key SID `SK...`) e, nesse caso, é ignorado sem marcar erro.
  * - O estado por conta fica em `auth.users.app_metadata.compensai_phone`
  *   (chave separada do billing, gravada só com a service role, sem DDL).
  * - Rate limit, tentativas e expiração são controlados aqui, antes e depois da
