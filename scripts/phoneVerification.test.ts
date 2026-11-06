@@ -60,9 +60,12 @@ const OTHER_USER = "user-2";
 const ACCOUNT_SID = `AC${"a".repeat(32)}`;
 const SERVICE_SID = `VA${"b".repeat(32)}`;
 const API_KEY = `SK${"c".repeat(32)}`;
+const CUSTOM_API_KEY = `SK${"d".repeat(32)}`;
 /** Valor fictício, só para provar que nunca vaza. */
 const API_KEY_SECRET = "segredo-ficticio-da-api-key";
 const AUTH_TOKEN = "token-ficticio-da-conta";
+/** Valor típico injetado pelo conector Lovable: não é um API Key SID SK... */
+const CONNECTOR_KEY = "chave-interna-do-conector-lovable";
 
 const CONFIG: TwilioConfig = {
   accountSid: ACCOUNT_SID,
@@ -82,6 +85,7 @@ const BASE_ENV: Record<string, string | undefined> = {
 
 const ENV_KEYS = [
   ...Object.keys(BASE_ENV),
+  "TWILIO_CUSTOM_API_KEY",
   "TWILIO_VERIFY_SERVICE",
   "TWILIO_SERVICE_SID",
   "PHONE_VERIFICATION_REQUIRED",
