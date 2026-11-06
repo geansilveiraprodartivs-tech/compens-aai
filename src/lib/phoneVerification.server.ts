@@ -99,7 +99,8 @@ export type TwilioConfigRead = {
 export function readTwilioConfig(env: Record<string, string | undefined>): TwilioConfigRead {
   const accountSid = str(env["TWILIO_ACCOUNT_SID"]);
   const authToken = str(env["TWILIO_AUTH_TOKEN"]);
-  const apiKey = str(env["TWILIO_API_KEY"]);
+  const customApiKey = str(env["TWILIO_CUSTOM_API_KEY"]);
+  const connectorApiKey = str(env["TWILIO_API_KEY"]);
   const apiKeySecret = str(env["TWILIO_API_KEY_SECRET"]);
   const verifyServiceSid =
     str(env["TWILIO_VERIFY_SERVICE_SID"]) ||
@@ -112,19 +113,37 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
   if (!accountSid) missing.push("TWILIO_ACCOUNT_SID");
   else if (!ACCOUNT_SID_RE.test(accountSid)) invalid.push("TWILIO_ACCOUNT_SID");
 
+  // TWILIO_CUSTOM_API_KEY (a API Key real, SK...) tem prioridade. O valor de
+  // TWILIO_API_KEY pode ser uma chave interna do conector (não é um SID SK...):
+  // nesse caso ele é ignorado, nunca marcado como inválido.
+  let apiKey = "";
+  let apiKeyName = "";
+  if (customApiKey !== "") {
+    apiKey = customApiKey;
+    apiKeyName = "TWILIO_CUSTOM_API_KEY";
+  } else if (connectorApiKey !== "" && API_KEY_RE.test(connectorApiKey)) {
+    apiKey = connectorApiKey;
+    apiKeyName = "TWILIO_API_KEY";
+  }
+
   const hasApiKeyPair = apiKey !== "" && apiKeySecret !== "";
   const authMode: TwilioConfig["authMode"] = hasApiKeyPair ? "api_key" : "auth_token";
 
-  if (!hasApiKeyPair && !authToken) {
-    missing.push("TWILIO_AUTH_TOKEN (ou TWILIO_API_KEY + TWILIO_API_KEY_SECRET)");
-  }
-  if (apiKey !== "" || apiKeySecret !== "") {
-    if (!hasApiKeyPair) {
-      missing.push(apiKey === "" ? "TWILIO_API_KEY" : "TWILIO_API_KEY_SECRET");
-    } else if (!API_KEY_RE.test(apiKey)) {
-      invalid.push("TWILIO_API_KEY");
+  if (customApiKey !== "") {
+    if (!API_KEY_RE.test(customApiKey)) {
+      invalid.push("TWILIO_CUSTOM_API_KEY");
     }
-  } else if (authToken !== "" && authToken.length < 8) {
+    if (apiKeySecret === "") {
+      missing.push("TWILIO_API_KEY_SECRET");
+    }
+  } else if (apiKey !== "" && apiKeySecret === "") {
+    missing.push("TWILIO_API_KEY_SECRET");
+  }
+
+  if (!hasApiKeyPair && !authToken && customApiKey === "" && apiKey === "") {
+    missing.push("TWILIO_AUTH_TOKEN (ou TWILIO_CUSTOM_API_KEY + TWILIO_API_KEY_SECRET)");
+  }
+  if (!hasApiKeyPair && authToken !== "" && authToken.length < 8) {
     invalid.push("TWILIO_AUTH_TOKEN");
   }
 
@@ -144,6 +163,7 @@ export function readTwilioConfig(env: Record<string, string | undefined>): Twili
     missing,
     invalid,
   };
+  void apiKeyName;
 }
 
 /** Diagnóstico público: **se** está configurado, nunca o valor. */
