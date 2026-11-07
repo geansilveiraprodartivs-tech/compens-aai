@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { AvatarEditor } from "@/components/AvatarEditor";
-import { PhoneVerificationCard } from "@/components/PhoneVerificationCard";
 import { PremiumCard, PremiumChip } from "@/components/PremiumBadge";
 import { PlanChoices } from "@/components/SubscriptionGate";
 import { useEntitlement } from "@/hooks/useEntitlement";
@@ -114,8 +113,6 @@ function PerfilPage() {
           Salvar orçamento
         </Button>
       </section>
-
-      <PhoneVerificationCard />
 
       <section className="glass space-y-3 p-4">
         <div className="flex items-start gap-2">
